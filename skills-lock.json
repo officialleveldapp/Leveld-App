@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "superwall-expo-quickstart": {
+      "source": "superwall/skills",
+      "sourceType": "github",
+      "computedHash": "f93489eaba68493f55807fe1ecb6cd58f9973725bcfd16c799b924256b6739f3"
+    },
+    "superwall-ios-quickstart": {
+      "source": "superwall/skills",
+      "sourceType": "github",
+      "computedHash": "e14392db24e52ad717f91902262a10912599fb92def65873080e8a4be7220822"
+    }
+  }
+}

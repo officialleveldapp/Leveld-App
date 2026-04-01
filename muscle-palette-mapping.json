@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "idMap": {
+    "texture": "muscle_id_map.png",
+    "note": "Each group uses one unique flat ID color in the source texture."
+  },
+  "groups": [
+    {
+      "key": "chest_pecs",
+      "label": "Chest (Pecs)",
+      "index": 1,
+      "idColorHex": "#FF0000",
+      "displayColorHex": "#FF5A5F"
+    },
+    {
+      "key": "shoulders_delts",
+      "label": "Shoulders (Delts)",
+      "index": 2,
+      "idColorHex": "#00FF00",
+      "displayColorHex": "#FF8C42"
+    },
+    {
+      "key": "biceps",
+      "label": "Biceps",
+      "index": 3,
+      "idColorHex": "#0000FF",
+      "displayColorHex": "#FFD166"
+    },
+    {
+      "key": "triceps",
+      "label": "Triceps",
+      "index": 4,
+      "idColorHex": "#FFFF00",
+      "displayColorHex": "#06D6A0"
+    },
+    {
+      "key": "forearms",
+      "label": "Forearms",
+      "index": 5,
+      "idColorHex": "#FF00FF",
+      "displayColorHex": "#3DDC97"
+    },
+    {
+      "key": "abs_core",
+      "label": "Abs/Core",
+      "index": 6,
+      "idColorHex": "#00FFFF",
+      "displayColorHex": "#4CC9F0"
+    },
+    {
+      "key": "obliques",
+      "label": "Obliques",
+      "index": 7,
+      "idColorHex": "#800000",
+      "displayColorHex": "#4895EF"
+    },
+    {
+      "key": "lats",
+      "label": "Lats",
+      "index": 8,
+      "idColorHex": "#008000",
+      "displayColorHex": "#4361EE"
+    },
+    {
+      "key": "upper_back_traps",
+      "label": "Upper Back/Traps",
+      "index": 9,
+      "idColorHex": "#000080",
+      "displayColorHex": "#3A0CA3"
+    },
+    {
+      "key": "lower_back",
+      "label": "Lower Back",
+      "index": 10,
+      "idColorHex": "#808000",
+      "displayColorHex": "#7209B7"
+    },
+    {
+      "key": "glutes",
+      "label": "Glutes",
+      "index": 11,
+      "idColorHex": "#800080",
+      "displayColorHex": "#B5179E"
+    },
+    {
+      "key": "quads",
+      "label": "Quads",
+      "index": 12,
+      "idColorHex": "#008080",
+      "displayColorHex": "#F72585"
+    },
+    {
+      "key": "hamstrings",
+      "label": "Hamstrings",
+      "index": 13,
+      "idColorHex": "#C0C0C0",
+      "displayColorHex": "#F15BB5"
+    },
+    {
+      "key": "calves",
+      "label": "Calves",
+      "index": 14,
+      "idColorHex": "#808080",
+      "displayColorHex": "#00BBF9"
+    }
+  ],
+  "themes": {
+    "highContrastBold": {
+      "chest_pecs": "#FF5A5F",
+      "shoulders_delts": "#FF8C42",
+      "biceps": "#FFD166",
+      "triceps": "#06D6A0",
+      "forearms": "#3DDC97",
+      "abs_core": "#4CC9F0",
+      "obliques": "#4895EF",
+      "lats": "#4361EE",
+      "upper_back_traps": "#3A0CA3",
+      "lower_back": "#7209B7",
+      "glutes": "#B5179E",
+      "quads": "#F72585",
+      "hamstrings": "#F15BB5",
+      "calves": "#00BBF9"
+    }
+  }
+}

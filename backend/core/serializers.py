@@ -1,0 +1,359 @@
+from django.contrib.auth.models import User
+from rest_framework import serializers
+from .models import (
+    Profile, Workout, Badge, UserBadge, Friendship, Follow,
+    Group, GroupMember, Challenge, ChallengeParticipant,
+    WorkoutFeed, FeedReaction, DailyTip,
+    WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
+)
+
+
+# ── Auth ──────────────────────────────────────────────
+
+class RegisterSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=6)
+    username = serializers.CharField(max_length=150)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def validate_username(self, value):
+        if Profile.objects.filter(username=value).exists():
+            raise serializers.ValidationError("This username is already taken.")
+        return value
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['email'],  # Django username = email
+            email=validated_data['email'],
+            password=validated_data['password'],
+        )
+        Profile.objects.create(
+            user=user,
+            username=validated_data['username'],
+            xp=0,
+            level=1,
+            current_streak=0,
+            longest_streak=0,
+            total_workouts=0,
+        )
+        return user
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class GoogleAuthSerializer(serializers.Serializer):
+    id_token = serializers.CharField()
+
+
+# ── Profile ───────────────────────────────────────────
+
+class ProfileSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='user_id', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+
+    class Meta:
+        model = Profile
+        fields = [
+            'id', 'email', 'username', 'avatar_url', 'xp', 'level',
+            'current_streak', 'longest_streak', 'total_workouts',
+            'goal', 'experience_level', 'workout_frequency',
+            'preferred_exercises', 'last_workout_date',
+            'is_pro', 'pro_expires_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'email', 'xp', 'level', 'current_streak', 'longest_streak',
+            'total_workouts', 'last_workout_date', 'is_pro', 'pro_expires_at',
+            'created_at', 'updated_at',
+        ]
+
+
+class ProfilePublicSerializer(serializers.ModelSerializer):
+    """Minimal profile info for leaderboard / feed."""
+    id = serializers.IntegerField(source='user_id', read_only=True)
+
+    class Meta:
+        model = Profile
+        fields = ['id', 'username', 'avatar_url', 'xp', 'level']
+
+
+# ── Workout ───────────────────────────────────────────
+
+class WorkoutSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.user_id', read_only=True)
+
+    class Meta:
+        model = Workout
+        fields = [
+            'id', 'user_id', 'workout_date', 'exercises',
+            'total_sets', 'total_reps', 'duration_minutes',
+            'calories_burned', 'xp_earned', 'notes', 'created_at',
+        ]
+        read_only_fields = ['id', 'user_id', 'created_at']
+
+
+class WorkoutCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Workout
+        fields = [
+            'workout_date', 'exercises', 'total_sets', 'total_reps',
+            'duration_minutes', 'calories_burned', 'xp_earned', 'notes',
+        ]
+
+
+# ── Badge ─────────────────────────────────────────────
+
+class BadgeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Badge
+        fields = [
+            'id', 'name', 'description', 'icon',
+            'requirement_type', 'requirement_value',
+            'xp_reward', 'created_at',
+        ]
+
+
+class UserBadgeSerializer(serializers.ModelSerializer):
+    badge = BadgeSerializer(read_only=True)
+
+    class Meta:
+        model = UserBadge
+        fields = ['id', 'user_id', 'badge_id', 'earned_at', 'badge']
+
+
+class DailyTipSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DailyTip
+        fields = ['id', 'text']
+
+
+# ── Follow ────────────────────────────────────────────
+
+class FollowSerializer(serializers.ModelSerializer):
+    follower = ProfilePublicSerializer(read_only=True)
+    following = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = Follow
+        fields = ['id', 'follower', 'following', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+# ── Friendship (legacy, kept for compat) ─────────────
+
+class FriendshipSerializer(serializers.ModelSerializer):
+    friend = ProfilePublicSerializer(read_only=True)
+    sender = ProfilePublicSerializer(source='user', read_only=True)
+
+    class Meta:
+        model = Friendship
+        fields = ['id', 'user_id', 'friend_id', 'status', 'created_at', 'friend', 'sender']
+        read_only_fields = ['id', 'user_id', 'created_at']
+
+
+class FriendshipCreateSerializer(serializers.Serializer):
+    friend_id = serializers.IntegerField()
+
+
+# ── Group ─────────────────────────────────────────────
+
+class GroupSerializer(serializers.ModelSerializer):
+    member_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Group
+        fields = [
+            'id', 'name', 'description', 'created_by_id',
+            'is_public', 'created_at', 'member_count',
+        ]
+        read_only_fields = ['id', 'created_by_id', 'created_at']
+
+    def get_member_count(self, obj):
+        return obj.members.count()
+
+
+class GroupMemberSerializer(serializers.ModelSerializer):
+    user = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = GroupMember
+        fields = ['id', 'group_id', 'user', 'joined_at']
+
+
+# ── Challenge ─────────────────────────────────────────
+
+class ChallengeParticipantSerializer(serializers.ModelSerializer):
+    user = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = ChallengeParticipant
+        fields = ['id', 'user', 'progress', 'completed', 'joined_at']
+        read_only_fields = ['id', 'joined_at']
+
+
+class ChallengeSerializer(serializers.ModelSerializer):
+    participant_count = serializers.SerializerMethodField()
+    participants = ChallengeParticipantSerializer(many=True, read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+    is_joined = serializers.SerializerMethodField()
+    my_progress = serializers.SerializerMethodField()
+    created_by = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = Challenge
+        fields = [
+            'id', 'group_id', 'name', 'description',
+            'challenge_type', 'start_date', 'end_date',
+            'target_value', 'created_at', 'is_active',
+            'participant_count', 'participants', 'is_joined',
+            'my_progress', 'created_by',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_participant_count(self, obj):
+        return obj.participants.count()
+
+    def get_is_joined(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return obj.participants.filter(user=request.user.profile).exists()
+
+    def get_my_progress(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 0
+        p = obj.participants.filter(user=request.user.profile).first()
+        return p.progress if p else 0
+
+
+class ChallengeCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, default='')
+    challenge_type = serializers.ChoiceField(
+        choices=['total_workouts', 'total_xp', 'streak', 'total_reps'],
+        default='total_workouts',
+    )
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    target_value = serializers.IntegerField(min_value=1)
+
+
+# ── Workout Templates ─────────────────────────────────
+
+class TemplateExerciseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TemplateExercise
+        fields = ['id', 'name', 'default_sets', 'default_reps', 'order']
+        read_only_fields = ['id']
+
+
+class WorkoutTemplateSerializer(serializers.ModelSerializer):
+    exercises = TemplateExerciseSerializer(many=True, read_only=True)
+    exercise_count = serializers.SerializerMethodField()
+    user = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = WorkoutTemplate
+        fields = [
+            'id', 'user', 'name', 'color', 'icon',
+            'exercises', 'exercise_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_exercise_count(self, obj):
+        return obj.exercises.count()
+
+
+class WorkoutTemplateCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=200)
+    color = serializers.CharField(max_length=7, default='#4C91FF')
+    icon = serializers.CharField(max_length=50, default='dumbbell')
+    exercises = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+
+
+class WorkoutLibraryTemplateSerializer(serializers.ModelSerializer):
+    exercise_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkoutLibraryTemplate
+        fields = [
+            'id',
+            'name',
+            'category',
+            'subtitle',
+            'source_name',
+            'source_url',
+            'color',
+            'icon',
+            'exercises',
+            'exercise_count',
+            'sort_order',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_exercise_count(self, obj):
+        return len(obj.exercises or [])
+
+
+class PersonalRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PersonalRecord
+        fields = ['id', 'exercise_name', 'weight', 'reps', 'achieved_at']
+        read_only_fields = ['id', 'achieved_at']
+
+
+# ── Feed ──────────────────────────────────────────────
+
+class FeedReactionSerializer(serializers.ModelSerializer):
+    user = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = FeedReaction
+        fields = ['id', 'reaction_type', 'user', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class WorkoutFeedSerializer(serializers.ModelSerializer):
+    user = ProfilePublicSerializer(read_only=True)
+    template = WorkoutTemplateSerializer(read_only=True)
+    reactions_summary = serializers.SerializerMethodField()
+    my_reaction = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkoutFeed
+        fields = [
+            'id', 'user_id', 'workout_id', 'template_id', 'content',
+            'likes_count', 'created_at', 'user', 'template',
+            'reactions_summary', 'my_reaction',
+        ]
+        read_only_fields = ['id', 'user_id', 'likes_count', 'created_at']
+
+    def get_reactions_summary(self, obj):
+        """Return counts per reaction type, e.g. {"fire": 3, "like": 1}"""
+        from django.db.models import Count
+        qs = obj.reactions.values('reaction_type').annotate(count=Count('id'))
+        return {item['reaction_type']: item['count'] for item in qs}
+
+    def get_my_reaction(self, obj):
+        """Return the current user's reaction type, or null."""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        reaction = obj.reactions.filter(user=request.user.profile).first()
+        return reaction.reaction_type if reaction else None
