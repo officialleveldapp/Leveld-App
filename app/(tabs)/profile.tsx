@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,14 @@ import {
   ScrollView,
   TouchableOpacity,
   Modal,
-  Platform,
   Alert,
+  Linking,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   useRevenueCat,
@@ -18,13 +22,30 @@ import {
 import { getPurchasesErrorMessage } from '@/lib/revenuecat/purchasesError';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
-import { LeveldProPaywallModal } from '@/components/LeveldProPaywallModal';
+import { useCloseModalsWhenPaywallOpens, usePaywall } from '@/contexts/PaywallContext';
 import { SubscriptionManagementModal } from '@/components/SubscriptionManagementModal';
 import { StreakDisplay } from '@/components/StreakDisplay';
 import { BadgeItem } from '@/components/BadgeItem';
-import { apiGetBadges, apiGetUserBadges, apiDeleteAccount } from '@/lib/api';
+import {
+  apiGetBadges,
+  apiGetUserBadges,
+  apiGetFollowers,
+  apiGetFollowing,
+  apiGetFriends,
+  apiGetExerciseLifetimeStats,
+} from '@/lib/api';
+import {
+  NOTIFICATION_VIBES,
+  DEFAULT_NOTIFICATION_PERSONALITY,
+  getNotificationPersonality,
+  getNotificationVibeRowsForProfileUi,
+  setNotificationPersonality,
+  scheduleDailyNotifications,
+  scheduleTestNotificationInSeconds,
+  type NotificationPersonality,
+} from '@/lib/notifications';
+import { isExpoGo } from '@/lib/superwallAvailability';
 import { Badge, UserBadge } from '@/types/database';
-import { router } from 'expo-router';
 import {
   Trophy,
   Flame,
@@ -35,23 +56,84 @@ import {
   Trash2,
   AlertTriangle,
   Crown,
+  Users,
+  ChevronRight,
+  Dumbbell,
 } from 'lucide-react-native';
 
 export default function ProfileScreen() {
-  const { profile, signOut, refreshProfile } = useAuth();
+  const router = useRouter();
+  const { profile, user, loading, signOut, deleteAccount, refreshProfile } = useAuth();
   const rc = useRevenueCat();
   const [badges, setBadges] = useState<Badge[]>([]);
   const [userBadges, setUserBadges] = useState<UserBadge[]>([]);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [friendsCount, setFriendsCount] = useState(0);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [rcBusy, setRcBusy] = useState(false);
-  const [showProPaywall, setShowProPaywall] = useState(false);
+  const showPaywall = usePaywall();
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
 
-  useEffect(() => {
-    loadBadges();
+  const closeAllProfileModals = useCallback(() => {
+    setShowSignOutModal(false);
+    setShowDeleteModal(false);
+    setShowSubscriptionModal(false);
   }, []);
+
+  useCloseModalsWhenPaywallOpens(closeAllProfileModals);
+
+  const [notificationVibe, setNotificationVibe] = useState<NotificationPersonality>(
+    DEFAULT_NOTIFICATION_PERSONALITY,
+  );
+  const [notificationVibeOptions, setNotificationVibeOptions] = useState<
+    ReadonlyArray<{ id: NotificationPersonality; label: string; subtitle: string }>
+  >(NOTIFICATION_VIBES);
+  const [notificationVibeLoading, setNotificationVibeLoading] = useState(true);
+  const [exerciseTotalsPreview, setExerciseTotalsPreview] = useState<{
+    exerciseCount: number;
+    totalReps: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [v, rows] = await Promise.all([
+        getNotificationPersonality(),
+        getNotificationVibeRowsForProfileUi(),
+      ]);
+      if (!cancelled) {
+        setNotificationVibe(v);
+        setNotificationVibeOptions(rows);
+        setNotificationVibeLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadExerciseTotalsPreview = useCallback(async () => {
+    try {
+      const { data } = await apiGetExerciseLifetimeStats();
+      const list = data?.exercises ?? [];
+      const totalReps = list.reduce((acc, r) => acc + r.total_reps, 0);
+      setExerciseTotalsPreview({ exerciseCount: list.length, totalReps });
+    } catch {
+      setExerciseTotalsPreview(null);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadBadges();
+      loadFollowCounts();
+      refreshProfile();
+      void loadExerciseTotalsPreview();
+    }, [loadExerciseTotalsPreview]),
+  );
 
   const loadBadges = async () => {
     if (!profile) return;
@@ -67,41 +149,41 @@ export default function ProfileScreen() {
     }
   };
 
+  const loadFollowCounts = async () => {
+    if (!profile?.id) return;
+    try {
+      const [{ data: followers }, { data: following }, { data: friends }] = await Promise.all([
+        apiGetFollowers(profile.id),
+        apiGetFollowing(profile.id),
+        apiGetFriends(),
+      ]);
+      setFollowersCount(followers?.length ?? 0);
+      setFollowingCount(following?.length ?? 0);
+      setFriendsCount(friends?.length ?? 0);
+    } catch {}
+  };
+
   const confirmSignOut = async () => {
     setShowSignOutModal(false);
     await signOut();
-    if (Platform.OS === 'web') {
-      window.location.href = '/';
-    } else {
-      // Reset root stack to welcome — tab layout also redirects if session is cleared.
-      router.replace('/');
-    }
   };
 
   const confirmDeleteAccount = async () => {
     setDeleting(true);
     try {
-      const { error } = await apiDeleteAccount();
-      if (error) {
-        console.error('Delete account error:', error);
-        setDeleting(false);
-        setShowDeleteModal(false);
-        return;
-      }
-      // Clear tokens and redirect
-      await signOut();
+      await deleteAccount();
       setShowDeleteModal(false);
-      if (Platform.OS === 'web') {
-        window.location.href = '/';
-      } else {
-        router.replace('/');
-      }
     } catch (e) {
       console.error('Delete account failed:', e);
-      setDeleting(false);
       setShowDeleteModal(false);
+    } finally {
+      setDeleting(false);
     }
   };
+
+  if (!loading && !user) {
+    return <View style={{ flex: 1, backgroundColor: '#1E1E1E' }} />;
+  }
 
   if (!profile) {
     return (
@@ -153,26 +235,74 @@ export default function ProfileScreen() {
 
           <View style={styles.compactMetricsRow}>
             <View style={styles.compactMetric}>
-              <Trophy color="#FFB547" size={18} />
+              <Text style={styles.compactMetricValue}>{followersCount}</Text>
+              <Text style={styles.compactMetricLabel}>Followers</Text>
+            </View>
+            <View style={styles.compactMetricDivider} />
+            <View style={styles.compactMetric}>
+              <Text style={styles.compactMetricValue}>{followingCount}</Text>
+              <Text style={styles.compactMetricLabel}>Following</Text>
+            </View>
+            <View style={styles.compactMetricDivider} />
+            <View style={styles.compactMetric}>
               <Text style={styles.compactMetricValue}>{profile.total_workouts}</Text>
               <Text style={styles.compactMetricLabel}>Workouts</Text>
             </View>
             <View style={styles.compactMetricDivider} />
             <View style={styles.compactMetric}>
-              <Flame color="#FFB547" size={18} fill="#FFB547" />
               <Text style={styles.compactMetricValue}>{profile.longest_streak}</Text>
               <Text style={styles.compactMetricLabel}>Best Streak</Text>
             </View>
-            <View style={styles.compactMetricDivider} />
-            <View style={styles.compactMetric}>
-              <Award color="#4C91FF" size={18} />
-              <Text style={styles.compactMetricValue}>
-                {userBadges.length}/{badges.length}
-              </Text>
-              <Text style={styles.compactMetricLabel}>Badges</Text>
-            </View>
           </View>
         </Card>
+
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => router.push('/friends')}
+          accessibilityRole="button"
+          accessibilityLabel="Friends and people on Leveld"
+        >
+          <Card style={styles.friendsCtaCard}>
+            <View style={styles.friendsCtaIcon}>
+              <Users color="#4C91FF" size={22} />
+            </View>
+            <View style={styles.friendsCtaMid}>
+              <Text style={styles.friendsCtaTitle}>Friends on Leveld</Text>
+              <Text style={styles.friendsCtaSub}>
+                {friendsCount === 0
+                  ? 'Search by username and add friends for groups & social'
+                  : `${friendsCount} friend${friendsCount === 1 ? '' : 's'} · find more people`}
+              </Text>
+            </View>
+            <ChevronRight color="#64748B" size={22} />
+          </Card>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => router.push('/exercise-stats')}
+          accessibilityRole="button"
+          accessibilityLabel="View lifetime exercise totals"
+        >
+          <Card style={styles.exerciseTotalsCtaCard}>
+            <View style={styles.exerciseTotalsIcon}>
+              <Dumbbell color="#4C91FF" size={22} />
+            </View>
+            <View style={styles.exerciseTotalsMid}>
+              <Text style={styles.exerciseTotalsTitle}>Exercise totals</Text>
+              <Text style={styles.exerciseTotalsSub}>
+                {exerciseTotalsPreview === null
+                  ? 'Lifetime reps per exercise from every logged workout'
+                  : exerciseTotalsPreview.exerciseCount === 0
+                    ? 'Log workouts on Track to build your stats'
+                    : `${exerciseTotalsPreview.exerciseCount} exercise${
+                        exerciseTotalsPreview.exerciseCount === 1 ? '' : 's'
+                      } · ${exerciseTotalsPreview.totalReps.toLocaleString()} total reps`}
+              </Text>
+            </View>
+            <ChevronRight color="#64748B" size={22} />
+          </Card>
+        </TouchableOpacity>
 
         <Card style={styles.snapshotCard}>
           <View style={styles.snapshotHeader}>
@@ -248,7 +378,7 @@ export default function ProfileScreen() {
                 title={rc.isEffectivelyPro ? 'Manage subscription' : 'View plans'}
                 onPress={() => {
                   if (!rc.isEffectivelyPro) {
-                    setShowProPaywall(true);
+                    showPaywall();
                     return;
                   }
                   setShowSubscriptionModal(true);
@@ -282,13 +412,97 @@ export default function ProfileScreen() {
           ) : null}
         </Card>
 
+        <Card style={styles.notificationVibeCard}>
+          <Text style={styles.notificationVibeTitle}>Reminder vibe</Text>
+          <Text style={styles.notificationVibeHint}>
+            Pick how Leveld talks to you in daily reminders (8am, 4pm, 8pm). Preset lines only—no
+            custom text, so notifications stay safe and on-brand.
+          </Text>
+          {notificationVibeLoading ? (
+            <ActivityIndicator color="#4C91FF" style={styles.notificationVibeSpinner} />
+          ) : (
+            <>
+              <View style={styles.notificationVibeList}>
+                {notificationVibeOptions.map((v) => {
+                  const selected = notificationVibe === v.id;
+                  return (
+                    <TouchableOpacity
+                      key={v.id}
+                      style={[
+                        styles.notificationVibeRow,
+                        selected && styles.notificationVibeRowSelected,
+                      ]}
+                      onPress={async () => {
+                        setNotificationVibe(v.id);
+                        await setNotificationPersonality(v.id);
+                        await scheduleDailyNotifications();
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.notificationVibeRowText}>
+                        <Text
+                          style={[
+                            styles.notificationVibeLabel,
+                            selected && styles.notificationVibeLabelSelected,
+                          ]}
+                        >
+                          {v.label}
+                        </Text>
+                        <Text style={styles.notificationVibeSubtitle}>{v.subtitle}</Text>
+                      </View>
+                      {selected ? <Text style={styles.notificationVibeCheck}>✓</Text> : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Button
+                title="Send a preview"
+                variant="outline"
+                onPress={async () => {
+                  const send = async () => {
+                    const ok = await scheduleTestNotificationInSeconds(3);
+                    if (!ok) {
+                      Alert.alert(
+                        'Notifications',
+                        'Permission was not granted. Enable notifications for Leveld in Settings.',
+                      );
+                    }
+                  };
+                  if (isExpoGo()) {
+                    Alert.alert(
+                      'Expo Go',
+                      'Notifications are delivered by the Expo Go app, so the banner icon is Expo’s—not Leveld’s. Use a dev build (npx expo run:ios) to see your real app icon on alerts.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Send anyway', onPress: () => void send() },
+                      ],
+                    );
+                    return;
+                  }
+                  await send();
+                }}
+              />
+            </>
+          )}
+        </Card>
+
         <View style={styles.quickActionsSection}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActionsGrid}>
             <TouchableOpacity style={styles.quickActionPill}>
               <Text style={styles.quickActionText}>Edit Profile</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.quickActionPill}>
+            <TouchableOpacity
+              style={styles.quickActionPill}
+              onPress={() => {
+                if (Platform.OS === 'ios') {
+                  void Linking.openURL('app-settings:');
+                } else {
+                  void Linking.openSettings();
+                }
+              }}
+              activeOpacity={0.8}
+            >
               <Text style={styles.quickActionText}>Notifications</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -397,12 +611,6 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      <LeveldProPaywallModal
-        visible={showProPaywall}
-        onClose={() => setShowProPaywall(false)}
-        onPurchased={() => void refreshProfile()}
-      />
-
       <SubscriptionManagementModal
         visible={showSubscriptionModal}
         onClose={() => setShowSubscriptionModal(false)}
@@ -434,7 +642,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 28,
   },
   title: {
     color: '#FFFFFF',
@@ -452,7 +660,63 @@ const styles = StyleSheet.create({
   profileCard: {
     paddingVertical: 20,
     paddingHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 28,
+  },
+  friendsCtaCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  friendsCtaIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(76, 145, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  friendsCtaMid: { flex: 1, minWidth: 0 },
+  friendsCtaTitle: {
+    color: '#F8FAFC',
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  friendsCtaSub: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  exerciseTotalsCtaCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  exerciseTotalsIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(76, 145, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exerciseTotalsMid: { flex: 1, minWidth: 0 },
+  exerciseTotalsTitle: {
+    color: '#F8FAFC',
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  exerciseTotalsSub: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 18,
   },
   profileTopRow: {
     flexDirection: 'row',
@@ -560,7 +824,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   snapshotCard: {
-    marginBottom: 16,
+    marginBottom: 28,
   },
   snapshotHeader: {
     marginBottom: 14,
@@ -620,13 +884,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   badgesSection: {
-    marginBottom: 24,
+    marginBottom: 32,
   },
   sectionTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   badgesGrid: {
     flexDirection: 'row',
@@ -634,7 +898,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   settingsCard: {
-    marginBottom: 24,
+    marginBottom: 32,
   },
   rcCardTitle: {
     marginBottom: 0,
@@ -654,8 +918,70 @@ const styles = StyleSheet.create({
   rcButton: {
     marginBottom: 10,
   },
+  notificationVibeCard: {
+    marginBottom: 28,
+    borderColor: 'rgba(76, 145, 255, 0.35)',
+    borderWidth: 1,
+  },
+  notificationVibeTitle: {
+    color: '#4C91FF',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  notificationVibeHint: {
+    color: '#888888',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  notificationVibeSpinner: {
+    marginVertical: 16,
+  },
+  notificationVibeList: {
+    gap: 8,
+    marginBottom: 14,
+  },
+  notificationVibeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2B2B2B',
+    backgroundColor: '#1A1A1A',
+  },
+  notificationVibeRowSelected: {
+    borderColor: 'rgba(76, 145, 255, 0.55)',
+    backgroundColor: 'rgba(76, 145, 255, 0.1)',
+  },
+  notificationVibeRowText: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  notificationVibeLabel: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  notificationVibeLabelSelected: {
+    color: '#E8F1FF',
+  },
+  notificationVibeSubtitle: {
+    color: '#999999',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  notificationVibeCheck: {
+    color: '#4C91FF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   quickActionsSection: {
-    marginBottom: 24,
+    marginBottom: 32,
   },
   quickActionsGrid: {
     flexDirection: 'row',

@@ -1,4 +1,9 @@
-import React, { useCallback, useEffect, type ComponentProps } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  type ComponentProps,
+} from 'react';
 import { useRouter } from 'expo-router';
 import {
   SuperwallProvider,
@@ -7,6 +12,7 @@ import {
   useUser,
 } from 'expo-superwall';
 import { useAuth } from '@/contexts/AuthContext';
+import { flushPaywallModalClosers } from '@/contexts/PaywallContext';
 import { PremiumGateContext } from '@/contexts/PremiumGateContext';
 
 type SuperwallProviderOptions = NonNullable<
@@ -16,15 +22,30 @@ type SuperwallProviderOptions = NonNullable<
 function SuperwallIdentifyEffect() {
   const { profile, loading } = useAuth();
   const { identify, signOut } = useUser();
+  /** Last synced app user id; avoids calling Superwall signOut on every render when logged out. */
+  const lastSyncedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (loading) return;
-    if (profile?.id != null) {
-      void identify(String(profile.id));
-    } else {
+
+    const nextId = profile?.id != null ? String(profile.id) : null;
+    const prevId = lastSyncedIdRef.current;
+    lastSyncedIdRef.current = nextId;
+
+    if (nextId != null) {
+      if (nextId !== prevId) {
+        void identify(nextId);
+      }
+      return;
+    }
+
+    if (prevId != null) {
       void signOut();
     }
-  }, [profile?.id, loading, identify, signOut]);
+    // `identify` / `signOut` from useUser() are often new references each render; including them
+    // re-fired this effect and caused maximum update depth when signing out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only when app profile id changes
+  }, [profile?.id, loading]);
 
   return null;
 }
@@ -46,6 +67,7 @@ function PremiumGateSuperwallInner({ children }: { children: React.ReactNode }) 
         feature();
         return;
       }
+      flushPaywallModalClosers();
       if (!isConfigured) {
         router.push('/paywall');
         return;

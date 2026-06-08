@@ -11,6 +11,12 @@ export interface Profile {
   goal: string;
   experience_level: string;
   workout_frequency: number;
+  onboarding_completed?: boolean;
+  body_weight_lbs?: number | null;
+  height_inches?: number | null;
+  starting_bench_lbs?: number | null;
+  training_environment?: string;
+  session_length_minutes?: number | null;
   preferred_exercises: string[];
   last_workout_date?: string;
   is_pro: boolean;
@@ -47,6 +53,15 @@ export interface Exercise {
   reps: number;
   weight?: number;
   duration?: number;
+  /** Set when this exercise was a new PR for that session (stored in workout JSON). */
+  is_new_pr?: boolean;
+}
+
+/** Aggregated across all logged workouts for the current user (API: workouts/exercise-stats/). */
+export interface ExerciseLifetimeStat {
+  exercise_name: string;
+  total_sets: number;
+  total_reps: number;
 }
 
 export interface Badge {
@@ -131,21 +146,40 @@ export interface TemplateExercise {
   order: number;
 }
 
+export interface FeedGroup {
+  id: string;
+  name: string;
+}
+
 export interface WorkoutFeed {
   id: string;
   user_id: string;
   workout_id?: string;
   template_id?: string;
+  group_id?: string;
   content: string;
   likes_count: number;
   created_at: string;
   user?: ProfilePublic;
   workout?: Workout;
   template?: WorkoutTemplate;
+  group?: FeedGroup;
+}
+
+export interface PersonalRecord {
+  id: string;
+  exercise_name: string;
+  weight: number;
+  reps: number;
+  achieved_at: string;
 }
 
 export interface UserPublicProfile extends Profile {
   recent_workouts: Workout[];
   templates: WorkoutTemplate[];
   friendship: Friendship | null;
+  /** Viewer may list this user's shared workout templates (Pro required when viewing others). */
+  can_view_shared_templates?: boolean;
+  /** Viewer may see recent workout activity (mutual follow required when viewing others). */
+  can_view_activity?: boolean;
 }

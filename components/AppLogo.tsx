@@ -8,7 +8,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-const SOURCE = require('@/assets/images/logo.png');
+/** In-app / auth / welcome only — home icon & notifications use `logo.png` (see `app.json`). */
+const SOURCE = require('@/assets/images/applogo.png');
 
 type Props = {
   /** Square box size; image uses `contain` inside. */

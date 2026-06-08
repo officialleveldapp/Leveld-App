@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import {
   CheckCircle,
   Flame,
@@ -14,6 +14,7 @@ import { Badge } from '@/types/database';
 interface BadgeItemProps {
   badge: Badge;
   earned?: boolean;
+  onPress?: () => void;
 }
 
 const iconMap: Record<string, any> = {
@@ -26,14 +27,14 @@ const iconMap: Record<string, any> = {
   award: Award,
 };
 
-export function BadgeItem({ badge, earned = false }: BadgeItemProps) {
+export function BadgeItem({ badge, earned = false, onPress }: BadgeItemProps) {
   const IconComponent = iconMap[badge.icon] || Award;
 
-  return (
+  const content = (
     <View style={[styles.container, !earned && styles.locked]}>
       <View style={[styles.iconContainer, !earned && styles.iconLocked]}>
         <IconComponent
-          color={earned ? '#FFB547' : '#666666'}
+          color={earned ? '#FFB547' : '#888888'}
           size={32}
           fill={earned ? '#FFB547' : 'transparent'}
         />
@@ -46,6 +47,16 @@ export function BadgeItem({ badge, earned = false }: BadgeItemProps) {
       </Text>
     </View>
   );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={onPress}>
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return content;
 }
 
 const styles = StyleSheet.create({
@@ -65,7 +76,8 @@ const styles = StyleSheet.create({
     borderColor: '#FFB547',
   },
   iconLocked: {
-    borderColor: '#666666',
+    borderColor: '#555555',
+    borderStyle: 'dashed',
   },
   name: {
     color: '#FFFFFF',
@@ -79,9 +91,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   locked: {
-    opacity: 0.5,
+    opacity: 0.7,
   },
   lockedText: {
-    color: '#666666',
+    color: '#888888',
   },
 });

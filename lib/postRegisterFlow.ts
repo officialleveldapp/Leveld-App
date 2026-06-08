@@ -27,9 +27,12 @@ async function storageRemove(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-/** Matches Django Profile defaults for new users who have not finished in-app onboarding. */
+/** True until the user finishes the in-app onboarding flow (server flag). */
 export function profileNeedsOnboarding(profile: Profile | null): boolean {
   if (!profile) return true;
+  if (profile.onboarding_completed === true) return false;
+  if (profile.onboarding_completed === false) return true;
+  // Older API responses without the flag: match prior default-profile heuristic.
   const g = (profile.goal || '').trim();
   const e = (profile.experience_level || '').trim();
   return g === 'General Fitness' && e === 'Beginner';

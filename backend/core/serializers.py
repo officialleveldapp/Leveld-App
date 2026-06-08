@@ -1,10 +1,13 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
+
+from .workout_integrity import clamp_xp_earned
 from .models import (
     Profile, Workout, Badge, UserBadge, Friendship, Follow,
-    Group, GroupMember, Challenge, ChallengeParticipant,
+    Group, GroupMember, GroupInvite, Challenge, ChallengeParticipant,
     WorkoutFeed, FeedReaction, DailyTip,
     WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
+    NotificationPersonalityPreset,
 )
 
 
@@ -68,6 +71,9 @@ class ProfileSerializer(serializers.ModelSerializer):
             'id', 'email', 'username', 'avatar_url', 'xp', 'level',
             'current_streak', 'longest_streak', 'total_workouts',
             'goal', 'experience_level', 'workout_frequency',
+            'onboarding_completed',
+            'body_weight_lbs', 'height_inches', 'starting_bench_lbs',
+            'training_environment', 'session_length_minutes',
             'preferred_exercises', 'last_workout_date',
             'is_pro', 'pro_expires_at',
             'created_at', 'updated_at',
@@ -86,6 +92,20 @@ class ProfilePublicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = ['id', 'username', 'avatar_url', 'xp', 'level']
+
+
+class NotificationPersonalityPresetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPersonalityPreset
+        fields = [
+            'slug',
+            'label',
+            'subtitle',
+            'sort_order',
+            'motivation_messages',
+            'workout_messages',
+            'social_messages',
+        ]
 
 
 # ── Workout ───────────────────────────────────────────
@@ -110,6 +130,15 @@ class WorkoutCreateSerializer(serializers.ModelSerializer):
             'workout_date', 'exercises', 'total_sets', 'total_reps',
             'duration_minutes', 'calories_burned', 'xp_earned', 'notes',
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        xp = attrs.get('xp_earned', 0)
+        sets = attrs.get('total_sets', 0)
+        reps = attrs.get('total_reps', 0)
+        duration = attrs.get('duration_minutes', 0)
+        attrs['xp_earned'] = clamp_xp_earned(xp, sets, reps, duration)
+        return attrs
 
 
 # ── Badge ─────────────────────────────────────────────
@@ -170,6 +199,7 @@ class FriendshipCreateSerializer(serializers.Serializer):
 
 class GroupSerializer(serializers.ModelSerializer):
     member_count = serializers.SerializerMethodField()
+    is_public = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Group
@@ -177,7 +207,7 @@ class GroupSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'created_by_id',
             'is_public', 'created_at', 'member_count',
         ]
-        read_only_fields = ['id', 'created_by_id', 'created_at']
+        read_only_fields = ['id', 'created_by_id', 'created_at', 'is_public']
 
     def get_member_count(self, obj):
         return obj.members.count()
@@ -189,6 +219,15 @@ class GroupMemberSerializer(serializers.ModelSerializer):
     class Meta:
         model = GroupMember
         fields = ['id', 'group_id', 'user', 'joined_at']
+
+
+class GroupInviteSerializer(serializers.ModelSerializer):
+    group = GroupSerializer(read_only=True)
+    inviter = ProfilePublicSerializer(read_only=True)
+
+    class Meta:
+        model = GroupInvite
+        fields = ['id', 'group', 'inviter', 'status', 'created_at']
 
 
 # ── Challenge ─────────────────────────────────────────
@@ -329,18 +368,25 @@ class FeedReactionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
+class FeedGroupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Group
+        fields = ['id', 'name']
+
+
 class WorkoutFeedSerializer(serializers.ModelSerializer):
     user = ProfilePublicSerializer(read_only=True)
     template = WorkoutTemplateSerializer(read_only=True)
+    group = FeedGroupSerializer(read_only=True)
     reactions_summary = serializers.SerializerMethodField()
     my_reaction = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkoutFeed
         fields = [
-            'id', 'user_id', 'workout_id', 'template_id', 'content',
-            'likes_count', 'created_at', 'user', 'template',
-            'reactions_summary', 'my_reaction',
+            'id', 'user_id', 'workout_id', 'template_id', 'group_id',
+            'content', 'likes_count', 'created_at', 'user', 'template',
+            'group', 'reactions_summary', 'my_reaction',
         ]
         read_only_fields = ['id', 'user_id', 'likes_count', 'created_at']
 

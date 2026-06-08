@@ -44,24 +44,43 @@ def process_workout_created(workout):
     check_and_award_badges(profile)
 
     # Update challenge progress
-    update_challenge_progress(profile, workout)
+    newly_completed_challenges = update_challenge_progress(profile, workout)
+    return newly_completed_challenges
 
 
-def check_and_award_badges(profile):
-    """Check all badges and award any the user now qualifies for."""
+def check_and_award_badges(profile, use_live_counts=False):
+    """Check all badges and award any the user now qualifies for. Returns newly earned badges.
+
+    When use_live_counts=True, derives total_workouts from actual Workout rows
+    instead of trusting the profile counter — used for catch-up syncs.
+    """
+    from .models import Workout
+
     badges = Badge.objects.all()
+    if not badges.exists():
+        return []
+
     earned_badge_ids = set(
         UserBadge.objects.filter(user=profile).values_list('badge_id', flat=True)
     )
 
+    if use_live_counts:
+        live_workout_count = Workout.objects.filter(user=profile).count()
+        if live_workout_count != profile.total_workouts:
+            profile.total_workouts = live_workout_count
+            profile.save(update_fields=['total_workouts'])
+    else:
+        live_workout_count = profile.total_workouts
+
     profile_stats = {
-        'total_workouts': profile.total_workouts,
+        'total_workouts': live_workout_count,
         'current_streak': profile.current_streak,
         'longest_streak': profile.longest_streak,
         'level': profile.level,
         'xp': profile.xp,
     }
 
+    newly_earned = []
     for badge in badges:
         if badge.id in earned_badge_ids:
             continue
@@ -69,20 +88,25 @@ def check_and_award_badges(profile):
         stat_value = profile_stats.get(badge.requirement_type, 0)
         if stat_value >= badge.requirement_value:
             UserBadge.objects.create(user=profile, badge=badge)
+            newly_earned.append(badge)
+
+    return newly_earned
 
 
 def update_challenge_progress(profile, workout):
-    """Update progress for all active challenges the user is participating in."""
+    """Update progress for active challenges. Returns payloads for challenges just completed."""
     today = timezone.now().date()
+    newly_completed = []
     participations = ChallengeParticipant.objects.filter(
         user=profile,
         completed=False,
         challenge__start_date__lte=today,
         challenge__end_date__gte=today,
-    ).select_related('challenge')
+    ).select_related('challenge', 'challenge__group')
 
     for p in participations:
         challenge = p.challenge
+        was_completed = p.completed
         if challenge.challenge_type == 'total_workouts':
             p.progress += 1
         elif challenge.challenge_type == 'total_xp':
@@ -95,3 +119,17 @@ def update_challenge_progress(profile, workout):
         if p.progress >= challenge.target_value:
             p.completed = True
         p.save()
+
+        if not was_completed and p.completed:
+            g = challenge.group
+            newly_completed.append(
+                {
+                    'participation_id': str(p.id),
+                    'challenge_id': str(challenge.id),
+                    'challenge_name': challenge.name,
+                    'group_id': str(g.id),
+                    'group_name': g.name,
+                }
+            )
+
+    return newly_completed

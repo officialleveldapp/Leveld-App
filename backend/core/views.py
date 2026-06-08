@@ -3,7 +3,7 @@ import re
 import secrets
 
 from django.contrib.auth.models import User
-from django.db.models import Q
+from django.db.models import Q, Max
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from rest_framework import status, generics, permissions
@@ -14,19 +14,22 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     Profile, Workout, Badge, UserBadge, Friendship, Follow,
-    Group, GroupMember, Challenge, ChallengeParticipant,
+    Group, GroupMember, GroupInvite, Challenge, ChallengeParticipant,
     WorkoutFeed, FeedReaction, DailyTip,
     WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
+    NotificationPersonalityPreset,
 )
+from .workout_integrity import MAX_WORKOUT_LIST
 from .serializers import (
     RegisterSerializer, LoginSerializer, ForgotPasswordSerializer,
     GoogleAuthSerializer,
     ProfileSerializer, ProfilePublicSerializer,
+    NotificationPersonalityPresetSerializer,
     WorkoutSerializer, WorkoutCreateSerializer,
     BadgeSerializer, UserBadgeSerializer, DailyTipSerializer,
     FollowSerializer,
     FriendshipSerializer, FriendshipCreateSerializer,
-    GroupSerializer, GroupMemberSerializer,
+    GroupSerializer, GroupMemberSerializer, GroupInviteSerializer,
     ChallengeSerializer, ChallengeCreateSerializer,
     ChallengeParticipantSerializer,
     WorkoutFeedSerializer,
@@ -59,6 +62,15 @@ class RegisterView(APIView):
             },
             'profile': ProfileSerializer(profile).data,
         }, status=status.HTTP_201_CREATED)
+
+
+class LogoutView(APIView):
+    """POST /api/auth/logout/ — client clears tokens after; this hits the server for audit/logging."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        return Response({'detail': 'Signed out.'}, status=status.HTTP_200_OK)
 
 
 class LoginView(APIView):
@@ -234,6 +246,7 @@ class RevenueCatWebhookView(APIView):
 
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    throttle_classes = []  # RevenueCat may burst; do not apply anon/user throttles
 
     def post(self, request):
         secret = os.getenv('REVENUECAT_WEBHOOK_SECRET', '').strip()
@@ -359,16 +372,82 @@ class WorkoutListCreateView(APIView):
 
         limit = request.query_params.get('limit')
         if limit:
-            qs = qs[:int(limit)]
+            try:
+                n = int(limit)
+            except (TypeError, ValueError):
+                n = MAX_WORKOUT_LIST
+            n = max(1, min(n, MAX_WORKOUT_LIST))
+            qs = qs[:n]
 
         return Response(WorkoutSerializer(qs, many=True).data)
 
     def post(self, request):
         profile = request.user.profile
+        existing_badge_ids = set(
+            UserBadge.objects.filter(user=profile).values_list('badge_id', flat=True)
+        )
         serializer = WorkoutCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         workout = serializer.save(user=profile)
-        return Response(WorkoutSerializer(workout).data, status=status.HTTP_201_CREATED)
+        # Signal fires synchronously: stats, badges, and challenges are updated.
+        new_badges = UserBadge.objects.filter(
+            user=profile,
+        ).exclude(badge_id__in=existing_badge_ids).select_related('badge')
+        data = WorkoutSerializer(workout).data
+        data['newly_earned_badges'] = BadgeSerializer(
+            [ub.badge for ub in new_badges], many=True,
+        ).data
+        data['newly_completed_challenges'] = getattr(
+            workout, '_newly_completed_challenges', [],
+        )
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+def _aggregate_exercise_lifetime_stats(profile):
+    """
+    Roll up per-exercise totals from all saved workouts (JSON exercises list).
+    Reps = sum of (sets * reps) per exercise entry, matching the client workout log.
+    """
+    totals = {}
+    for w in Workout.objects.filter(user=profile).only('exercises'):
+        for ex in w.exercises or []:
+            name = (ex.get('name') or '').strip()
+            if not name:
+                continue
+            try:
+                n_sets = int(ex.get('sets') or 0)
+            except (TypeError, ValueError):
+                n_sets = 0
+            try:
+                reps_per_set = int(ex.get('reps') or 0)
+            except (TypeError, ValueError):
+                reps_per_set = 0
+            if name not in totals:
+                totals[name] = {'total_sets': 0, 'total_reps': 0}
+            totals[name]['total_sets'] += n_sets
+            totals[name]['total_reps'] += n_sets * reps_per_set
+    items = [
+        {
+            'exercise_name': name,
+            'total_sets': v['total_sets'],
+            'total_reps': v['total_reps'],
+        }
+        for name, v in totals.items()
+    ]
+    items.sort(key=lambda x: (-x['total_reps'], x['exercise_name'].lower()))
+    return items
+
+
+class ExerciseLifetimeStatsView(APIView):
+    """
+    GET /api/workouts/exercise-stats/
+    Lifetime sets and reps per exercise name for the authenticated user.
+    """
+
+    def get(self, request):
+        profile = request.user.profile
+        exercises = _aggregate_exercise_lifetime_stats(profile)
+        return Response({'exercises': exercises})
 
 
 # ══════════════════════════════════════════════════════
@@ -387,11 +466,45 @@ class UserBadgeListView(APIView):
         return Response(UserBadgeSerializer(qs, many=True).data)
 
 
+class BadgeSyncView(APIView):
+    """POST /api/badges/sync/ — check for any missed badges using live workout counts."""
+
+    def post(self, request):
+        from .services import check_and_award_badges
+        profile = request.user.profile
+        newly_earned = check_and_award_badges(profile, use_live_counts=True)
+        return Response({
+            'newly_earned_badges': BadgeSerializer(newly_earned, many=True).data,
+        })
+
+
 class DailyTipListView(generics.ListAPIView):
     serializer_class = DailyTipSerializer
 
     def get_queryset(self):
         return DailyTip.objects.filter(is_active=True)
+
+
+class NotificationPresetBundleView(APIView):
+    """
+    Authenticated clients fetch server-driven notification “vibe” copy
+    (motivation / workout / social message pools per preset).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        qs = NotificationPersonalityPreset.objects.filter(enabled=True).order_by(
+            'sort_order', 'slug'
+        )
+        latest = qs.aggregate(m=Max('updated_at'))['m']
+        data = NotificationPersonalityPresetSerializer(qs, many=True).data
+        return Response(
+            {
+                'updated_at': latest.isoformat() if latest else None,
+                'presets': data,
+            }
+        )
 
 
 # ══════════════════════════════════════════════════════
@@ -562,25 +675,45 @@ class FeedListView(APIView):
         )
         following_ids.append(profile.user_id)
 
+        # General posts (no group) from followed users + self
+        general_q = Q(group__isnull=True, user__user_id__in=following_ids)
+
+        # Group posts from groups the user belongs to
+        my_group_ids = list(
+            GroupMember.objects.filter(user=profile).values_list('group_id', flat=True)
+        )
+        group_q = Q(group_id__in=my_group_ids) if my_group_ids else Q(pk__in=[])
+
         qs = WorkoutFeed.objects.filter(
-            user__user_id__in=following_ids
-        ).select_related('user').prefetch_related(
+            general_q | group_q
+        ).select_related('user', 'group').prefetch_related(
             'template__exercises', 'template__user', 'reactions'
-        ).order_by('-created_at')[:30]
+        ).order_by('-created_at')[:50]
 
         return Response(WorkoutFeedSerializer(qs, many=True, context={'request': request}).data)
 
     def post(self, request):
-        """Create a feed post. Optionally attach a template_id to share a workout."""
+        """Create a feed post. Optionally target a group via group_id."""
         profile = request.user.profile
         content = request.data.get('content', '').strip()
         template_id = request.data.get('template_id')
         workout_id = request.data.get('workout_id')
+        group_id = request.data.get('group_id')
 
         if not content:
             return Response({'detail': 'Content is required.'}, status=400)
 
         kwargs = {'user': profile, 'content': content}
+
+        if group_id:
+            try:
+                group = Group.objects.get(pk=group_id)
+            except Group.DoesNotExist:
+                return Response({'detail': 'Group not found.'}, status=404)
+            if not GroupMember.objects.filter(group=group, user=profile).exists():
+                return Response({'detail': 'You must be a member of this group to post.'}, status=403)
+            kwargs['group'] = group
+
         if template_id:
             try:
                 template = WorkoutTemplate.objects.get(pk=template_id)
@@ -681,11 +814,9 @@ class GroupListCreateView(APIView):
             GroupMember.objects.filter(user=profile).values_list('group_id', flat=True)
         )
         my_groups = Group.objects.filter(pk__in=my_group_ids)
-        discover_groups = Group.objects.filter(is_public=True).exclude(pk__in=my_group_ids)
 
         return Response({
             'my_groups': GroupSerializer(my_groups, many=True).data,
-            'discover': GroupSerializer(discover_groups, many=True).data,
         })
 
     def post(self, request):
@@ -709,10 +840,84 @@ class GroupDetailView(APIView):
         members = GroupMember.objects.filter(group=group).select_related('user')
         is_member = members.filter(user=profile).exists()
 
+        my_pending_invite_user_ids = []
+        if is_member:
+            my_pending_invite_user_ids = list(
+                GroupInvite.objects.filter(
+                    group=group, inviter=profile, status='pending'
+                ).values_list('invitee__user_id', flat=True)
+            )
+
         data = GroupSerializer(group).data
         data['members'] = GroupMemberSerializer(members, many=True).data
         data['is_member'] = is_member
+        data['is_admin'] = str(group.created_by_id) == str(profile.user_id)
+        data['my_pending_invite_user_ids'] = my_pending_invite_user_ids
         return Response(data)
+
+    def patch(self, request, pk):
+        profile = request.user.profile
+        try:
+            group = Group.objects.get(pk=pk)
+        except Group.DoesNotExist:
+            return Response({'detail': 'Group not found.'}, status=404)
+
+        if str(group.created_by_id) != str(profile.user_id):
+            return Response({'detail': 'Only the group admin can update settings.'}, status=403)
+
+        allowed = {'name', 'description'}
+        for field, value in request.data.items():
+            if field in allowed:
+                setattr(group, field, value)
+        group.save()
+
+        members = GroupMember.objects.filter(group=group).select_related('user')
+        my_pending_invite_user_ids = list(
+            GroupInvite.objects.filter(
+                group=group, inviter=profile, status='pending'
+            ).values_list('invitee__user_id', flat=True)
+        )
+        data = GroupSerializer(group).data
+        data['members'] = GroupMemberSerializer(members, many=True).data
+        data['is_member'] = True
+        data['is_admin'] = True
+        data['my_pending_invite_user_ids'] = my_pending_invite_user_ids
+        return Response(data)
+
+    def delete(self, request, pk):
+        profile = request.user.profile
+        try:
+            group = Group.objects.get(pk=pk)
+        except Group.DoesNotExist:
+            return Response({'detail': 'Group not found.'}, status=404)
+
+        if str(group.created_by_id) != str(profile.user_id):
+            return Response({'detail': 'Only the group creator can delete this group.'}, status=403)
+
+        group.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class GroupRemoveMemberView(APIView):
+    """DELETE /api/groups/<uuid:pk>/members/<int:user_id>/ — creator removes a member"""
+    def delete(self, request, pk, user_id):
+        profile = request.user.profile
+        try:
+            group = Group.objects.get(pk=pk)
+        except Group.DoesNotExist:
+            return Response({'detail': 'Group not found.'}, status=404)
+
+        if str(group.created_by_id) != str(profile.user_id):
+            return Response({'detail': 'Only the group creator can remove members.'}, status=403)
+
+        if user_id == profile.user_id:
+            return Response({'detail': 'Cannot remove yourself. Use leave instead.'}, status=400)
+
+        deleted, _ = GroupMember.objects.filter(group=group, user__user_id=user_id).delete()
+        if not deleted:
+            return Response({'detail': 'User is not a member.'}, status=404)
+
+        return Response({'detail': 'Member removed.'})
 
 
 class GroupJoinView(APIView):
@@ -737,6 +942,103 @@ class GroupLeaveView(APIView):
         ).delete()
         if not deleted:
             return Response({'detail': 'Not a member.'}, status=404)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _are_mutual_friends(profile: Profile, other: Profile) -> bool:
+    a = Follow.objects.filter(follower=profile, following=other).exists()
+    b = Follow.objects.filter(follower=other, following=profile).exists()
+    return a and b
+
+
+class GroupInviteCreateView(APIView):
+    """POST /api/groups/<uuid>/invites/ — member invites a mutual friend (in-app only)."""
+
+    def post(self, request, pk):
+        profile = request.user.profile
+        raw_uid = request.data.get('user_id')
+        try:
+            user_id = int(raw_uid)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Invalid user_id.'}, status=400)
+
+        try:
+            group = Group.objects.get(pk=pk)
+        except Group.DoesNotExist:
+            return Response({'detail': 'Group not found.'}, status=404)
+
+        if not GroupMember.objects.filter(group=group, user=profile).exists():
+            return Response({'detail': 'You must be a member to invite people.'}, status=403)
+
+        try:
+            invitee_profile = Profile.objects.get(user_id=user_id)
+        except Profile.DoesNotExist:
+            return Response({'detail': 'User not found.'}, status=404)
+
+        if invitee_profile.user_id == profile.user_id:
+            return Response({'detail': 'You cannot invite yourself.'}, status=400)
+
+        if not _are_mutual_friends(profile, invitee_profile):
+            return Response({'detail': 'You can only invite mutual friends.'}, status=403)
+
+        if GroupMember.objects.filter(group=group, user=invitee_profile).exists():
+            return Response({'detail': 'User is already a member.'}, status=400)
+
+        existing = GroupInvite.objects.filter(group=group, invitee=invitee_profile).first()
+        if existing:
+            if existing.status == 'pending':
+                return Response({'detail': 'Invite already pending.'}, status=400)
+            existing.delete()
+
+        invite = GroupInvite.objects.create(
+            group=group, invitee=invitee_profile, inviter=profile, status='pending'
+        )
+        return Response(GroupInviteSerializer(invite).data, status=201)
+
+
+class GroupInviteListView(APIView):
+    """GET /api/group-invites/ — pending invites for the current user (as invitee)."""
+
+    def get(self, request):
+        profile = request.user.profile
+        qs = (
+            GroupInvite.objects.filter(invitee=profile, status='pending')
+            .select_related('group', 'inviter')
+            .order_by('-created_at')
+        )
+        return Response(GroupInviteSerializer(qs, many=True).data)
+
+
+class GroupInviteAcceptView(APIView):
+    """POST /api/group-invites/<uuid>/accept/"""
+
+    def post(self, request, pk):
+        profile = request.user.profile
+        try:
+            invite = GroupInvite.objects.select_related('group').get(pk=pk, invitee=profile)
+        except GroupInvite.DoesNotExist:
+            return Response({'detail': 'Invite not found.'}, status=404)
+
+        if invite.status != 'pending':
+            return Response({'detail': 'This invite is no longer active.'}, status=400)
+
+        group = invite.group
+        GroupMember.objects.get_or_create(group=group, user=profile)
+        invite.delete()
+        return Response({'detail': 'Joined group.', 'group_id': str(group.id)}, status=200)
+
+
+class GroupInviteDeclineView(APIView):
+    """POST /api/group-invites/<uuid>/decline/"""
+
+    def post(self, request, pk):
+        profile = request.user.profile
+        try:
+            invite = GroupInvite.objects.get(pk=pk, invitee=profile, status='pending')
+        except GroupInvite.DoesNotExist:
+            return Response({'detail': 'Invite not found.'}, status=404)
+
+        invite.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -959,15 +1261,40 @@ class PersonalRecordListView(APIView):
 # ══════════════════════════════════════════════════════
 
 class UserSearchView(APIView):
-    """GET /api/users/search/?q=username"""
+    """GET /api/users/search/?q=username — includes follow relationship for Add friend UI."""
     def get(self, request):
+        my_profile = request.user.profile
         q = request.query_params.get('q', '').strip()
         if len(q) < 2:
             return Response([])
-        profiles = Profile.objects.filter(
-            username__icontains=q
-        ).exclude(user=request.user)[:20]
-        return Response(ProfilePublicSerializer(profiles, many=True).data)
+        profiles = list(
+            Profile.objects.filter(username__icontains=q)
+            .exclude(user=request.user)[:20]
+        )
+        if not profiles:
+            return Response([])
+        ids = [p.user_id for p in profiles]
+        i_follow = set(
+            Follow.objects.filter(
+                follower=my_profile, following__user_id__in=ids
+            ).values_list('following__user_id', flat=True)
+        )
+        follows_me = set(
+            Follow.objects.filter(
+                following=my_profile, follower__user_id__in=ids
+            ).values_list('follower__user_id', flat=True)
+        )
+        out = []
+        for target in profiles:
+            uid = target.user_id
+            is_following = uid in i_follow
+            is_follower = uid in follows_me
+            data = ProfilePublicSerializer(target).data
+            data['is_following'] = is_following
+            data['is_follower'] = is_follower
+            data['is_friend'] = is_following and is_follower
+            out.append(data)
+        return Response(out)
 
 
 class UserPublicProfileView(APIView):
@@ -1006,17 +1333,30 @@ class UserPublicProfileView(APIView):
         ).exists()
         data['is_friend'] = data['is_following'] and data['is_follower']
 
+        viewing_self = my_profile.user_id == target.user_id
+        # Other users' shared workout templates: viewer must be Pro (own profile always allowed).
+        can_view_shared_templates = viewing_self or my_profile.is_pro
+        # Recent activity: only mutual follows (friends), or own profile.
+        can_view_activity = viewing_self or data['is_friend']
+
         # Earned badges
         user_badges = UserBadge.objects.filter(user=target).select_related('badge')
         data['badges'] = UserBadgeSerializer(user_badges, many=True).data
 
-        # Recent workouts
-        workouts = Workout.objects.filter(user=target).order_by('-workout_date')[:10]
-        data['recent_workouts'] = WorkoutSerializer(workouts, many=True).data
+        if can_view_activity:
+            workouts = Workout.objects.filter(user=target).order_by('-workout_date')[:10]
+            data['recent_workouts'] = WorkoutSerializer(workouts, many=True).data
+        else:
+            data['recent_workouts'] = []
 
-        # Templates
-        templates = WorkoutTemplate.objects.filter(user=target).prefetch_related('exercises')
-        data['templates'] = WorkoutTemplateSerializer(templates, many=True).data
+        if can_view_shared_templates:
+            templates = WorkoutTemplate.objects.filter(user=target).prefetch_related('exercises')
+            data['templates'] = WorkoutTemplateSerializer(templates, many=True).data
+        else:
+            data['templates'] = []
+
+        data['can_view_shared_templates'] = can_view_shared_templates
+        data['can_view_activity'] = can_view_activity
 
         # Legacy friendship status (compat)
         friendship = Friendship.objects.filter(
@@ -1032,22 +1372,18 @@ class UserPublicProfileView(APIView):
 # ══════════════════════════════════════════════════════
 
 class GroupFeedView(APIView):
-    """GET /api/groups/<uuid:pk>/feed/  – feed posts from group members"""
+    """GET /api/groups/<uuid:pk>/feed/  – posts targeted to this group"""
     def get(self, request, pk):
         try:
             group = Group.objects.get(pk=pk)
         except Group.DoesNotExist:
             return Response({'detail': 'Group not found.'}, status=404)
 
-        member_user_ids = list(
-            GroupMember.objects.filter(group=group).values_list('user__user_id', flat=True)
-        )
-
         qs = WorkoutFeed.objects.filter(
-            user__user_id__in=member_user_ids
-        ).select_related('user').prefetch_related(
+            group=group
+        ).select_related('user', 'group').prefetch_related(
             'template__exercises', 'template__user', 'reactions'
-        ).order_by('-created_at')[:30]
+        ).order_by('-created_at')[:50]
 
         return Response(WorkoutFeedSerializer(qs, many=True, context={'request': request}).data)
 
@@ -1070,6 +1406,49 @@ class GroupLeaderboardView(APIView):
 # ══════════════════════════════════════════════════════
 #  GROUP CHALLENGES
 # ══════════════════════════════════════════════════════
+
+
+def _serialize_challenge_participation(p: ChallengeParticipant) -> dict:
+    c = p.challenge
+    g = c.group
+    return {
+        'id': str(p.id),
+        'progress': p.progress,
+        'completed': p.completed,
+        'challenge': {
+            'id': str(c.id),
+            'name': c.name,
+            'challenge_type': c.challenge_type,
+            'target_value': c.target_value,
+            'start_date': c.start_date,
+            'end_date': c.end_date,
+            'is_active': c.is_active,
+        },
+        'group': {
+            'id': str(g.id),
+            'name': g.name,
+        },
+    }
+
+
+class UserChallengeParticipationsView(APIView):
+    """GET /api/challenges/participations/ — home screen: user's group challenges."""
+
+    def get(self, request):
+        profile = request.user.profile
+        in_any_group = GroupMember.objects.filter(user=profile).exists()
+        qs = (
+            ChallengeParticipant.objects.filter(user=profile)
+            .select_related('challenge__group')
+            .order_by('completed', '-challenge__end_date')
+        )
+        return Response({
+            'in_any_group': in_any_group,
+            'participations': [
+                _serialize_challenge_participation(p) for p in qs
+            ],
+        })
+
 
 class GroupChallengeListCreateView(APIView):
     """GET/POST /api/groups/<pk>/challenges/"""

@@ -3,21 +3,23 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   TouchableOpacity,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { AppLogo } from '@/components/AppLogo';
+import { AuthScreenLayout } from '@/components/AuthScreenLayout';
 import { Button } from '@/components/Button';
+import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { Input } from '@/components/Input';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Profile } from '@/types/database';
 import { profileNeedsOnboarding } from '@/lib/postRegisterFlow';
 import { useGoogleIdToken } from '@/hooks/useGoogleIdToken';
-import { ArrowLeft } from 'lucide-react-native';
+import { resetToWelcome } from '@/lib/resetToWelcome';
+import { replaceWithPendingGroupInviteIfAny } from '@/lib/pendingGroupInviteNavigation';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -31,6 +33,27 @@ export default function SignUpScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
+
+  useEffect(() => {
+    if (
+      Platform.OS === 'android' &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!configured) {
+      setShowEmailAuth(true);
+    }
+  }, [configured]);
+
+  const toggleEmailAuth = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowEmailAuth((v) => !v);
+  };
 
   useEffect(() => {
     if (response?.type === 'success' && 'params' in response && response.params?.id_token) {
@@ -43,6 +66,8 @@ export default function SignUpScreen() {
           const prof = data?.profile as Profile | undefined;
           if (prof && profileNeedsOnboarding(prof)) {
             router.replace('/onboarding');
+          } else if (await replaceWithPendingGroupInviteIfAny(router)) {
+            /* resumed group invite */
           } else {
             router.replace('/(tabs)');
           }
@@ -82,6 +107,8 @@ export default function SignUpScreen() {
       const prof = data?.profile as Profile | undefined;
       if (prof && profileNeedsOnboarding(prof)) {
         router.replace('/onboarding');
+      } else if (await replaceWithPendingGroupInviteIfAny(router)) {
+        /* resumed group invite */
       } else {
         router.replace('/(tabs)');
       }
@@ -93,166 +120,169 @@ export default function SignUpScreen() {
   };
 
   return (
-    <LinearGradient colors={['#1E1E1E', '#0A0A0A']} style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <ArrowLeft color="#FFFFFF" size={24} />
+    <AuthScreenLayout
+      eyebrow="Join Leveld"
+      title="Get started"
+      subtitle="Sign up with Google or your email."
+      onBack={() =>
+        Platform.OS === 'web' ? router.replace('/') : resetToWelcome()
+      }
+      footer={
+        <View style={styles.footerRow}>
+          <Text style={styles.footerText}>Already training with us? </Text>
+          <TouchableOpacity onPress={() => router.push('/auth/login')} hitSlop={8}>
+            <Text style={styles.linkText}>Log in</Text>
           </TouchableOpacity>
+        </View>
+      }
+    >
+      {googleSetupHint ? (
+        <Text style={styles.hintText}>{googleSetupHint}</Text>
+      ) : null}
 
-          <AppLogo size={80} containerStyle={styles.brandMark} />
+      {configured ? (
+        <GoogleSignInButton
+          onPress={() => promptAsync()}
+          disabled={!request || loading}
+          loading={loading}
+          label="Continue with Google"
+          style={styles.googleBtn}
+        />
+      ) : null}
 
-          <View style={styles.header}>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>
-              Join Leveld and start your fitness journey
+      {configured ? (
+        <>
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            onPress={toggleEmailAuth}
+            style={styles.altAuthPill}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.altAuthText}>
+              {showEmailAuth ? 'Hide email sign-up' : 'Use Email Address'}
             </Text>
-          </View>
+            {showEmailAuth ? (
+              <ChevronUp color="#4C91FF" size={18} />
+            ) : (
+              <ChevronDown color="#4C91FF" size={18} />
+            )}
+          </TouchableOpacity>
+        </>
+      ) : null}
 
-          <View style={styles.form}>
-            <Input
-              label="Username"
-              placeholder="Choose a username"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-            />
-            <Input
-              label="Email"
-              placeholder="Enter your email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <Input
-              label="Password"
-              placeholder="Create a password"
-              value={password}
-              onChangeText={setPassword}
-              isPassword
-            />
-            <Input
-              label="Confirm Password"
-              placeholder="Confirm your password"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              isPassword
-            />
+      {showEmailAuth ? (
+        <View style={styles.emailSection}>
+          <Input
+            label="Username"
+            placeholder="Choose a username"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+          />
+          <Input
+            label="Email"
+            placeholder="Enter your email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+          <Input
+            label="Password"
+            placeholder="Create a password"
+            value={password}
+            onChangeText={setPassword}
+            isPassword
+          />
+          <Input
+            label="Confirm Password"
+            placeholder="Confirm your password"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            isPassword
+          />
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          <Button
+            title="Create account with email"
+            onPress={handleSignUp}
+            loading={loading}
+            style={styles.emailSubmitButton}
+          />
+        </View>
+      ) : null}
 
-            <Button
-              title="Create Account"
-              onPress={handleSignUp}
-              loading={loading}
-              style={styles.button}
-            />
-
-            {googleSetupHint ? (
-              <Text style={styles.hintText}>{googleSetupHint}</Text>
-            ) : null}
-            {configured ? (
-              <TouchableOpacity
-                onPress={() => promptAsync()}
-                disabled={!request || loading}
-                style={styles.googleButton}
-              >
-                <Text style={styles.googleButtonText}>Continue with Google</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an account? </Text>
-              <TouchableOpacity onPress={() => router.push('/auth/login')}>
-                <Text style={styles.linkText}>Log In</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </AuthScreenLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  googleBtn: {
+    marginTop: 0,
   },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 40,
-  },
-  backButton: {
-    marginBottom: 20,
-  },
-  brandMark: {
-    alignSelf: 'center',
-    marginBottom: 20,
-  },
-  header: {
-    marginBottom: 32,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
+  hintText: {
     color: '#999999',
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 12,
   },
-  form: {
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#2A2A2A',
+  },
+  dividerText: {
+    color: '#777777',
+    fontSize: 13,
+    paddingHorizontal: 12,
+  },
+  altAuthPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    gap: 6,
+  },
+  altAuthText: {
+    color: '#4C91FF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  emailSection: {
+    marginTop: 16,
     gap: 4,
   },
-  button: {
-    marginTop: 8,
-  },
-  googleButton: {
-    marginTop: 12,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#444',
-    alignItems: 'center',
-  },
-  googleButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  emailSubmitButton: {
+    marginTop: 16,
   },
   errorText: {
     color: '#FF4C4C',
     fontSize: 14,
-    marginBottom: 8,
+    lineHeight: 20,
     textAlign: 'center',
+    marginTop: 16,
   },
-  hintText: {
-    color: '#888888',
-    fontSize: 12,
-    marginTop: 8,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  footer: {
+  footerRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
-    marginTop: 24,
+    alignItems: 'center',
   },
   footerText: {
     color: '#999999',

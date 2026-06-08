@@ -41,5 +41,6 @@ backend/.env
 
 # python
 backend/venv/
+backend/staticfiles/
 __pycache__/
 *.py[cod]

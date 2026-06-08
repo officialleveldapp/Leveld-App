@@ -1,8 +1,9 @@
 from django.contrib import admin
 from .models import (
     Profile, Workout, Badge, UserBadge, Friendship,
-    Group, GroupMember, Challenge, WorkoutFeed, FeedReaction, DailyTip,
+    Group, GroupMember, GroupInvite, Challenge, WorkoutFeed, FeedReaction, DailyTip,
     WorkoutLibraryTemplate,
+    NotificationPersonalityPreset,
 )
 
 
@@ -44,6 +45,12 @@ class GroupMemberAdmin(admin.ModelAdmin):
     list_display = ('group', 'user', 'joined_at')
 
 
+@admin.register(GroupInvite)
+class GroupInviteAdmin(admin.ModelAdmin):
+    list_display = ('group', 'inviter', 'invitee', 'status', 'created_at')
+    list_filter = ('status',)
+
+
 @admin.register(Challenge)
 class ChallengeAdmin(admin.ModelAdmin):
     list_display = ('name', 'group', 'challenge_type', 'start_date', 'end_date')
@@ -71,3 +78,13 @@ class WorkoutLibraryTemplateAdmin(admin.ModelAdmin):
     list_display = ('name', 'category', 'source_name', 'source_url', 'is_active', 'sort_order', 'updated_at')
     list_filter = ('category', 'is_active')
     search_fields = ('name', 'subtitle', 'source_name', 'source_url')
+
+
+@admin.register(NotificationPersonalityPreset)
+class NotificationPersonalityPresetAdmin(admin.ModelAdmin):
+    list_display = ('slug', 'label', 'enabled', 'sort_order', 'updated_at')
+    list_editable = ('enabled', 'sort_order')
+    list_filter = ('enabled',)
+    search_fields = ('slug', 'label')
+    ordering = ('sort_order', 'slug')
+    readonly_fields = ('updated_at',)

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -10,17 +10,40 @@ import {
   Modal,
   TextInput,
   Dimensions,
+  Linking,
   Pressable,
   Animated,
   Easing as RNEasing,
+  ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePremiumGate } from '@/contexts/PremiumGateContext';
-import { PLACEMENT_CUSTOM_TEMPLATE } from '@/lib/placements';
+import { useCloseModalsWhenPaywallOpens, usePaywall } from '@/contexts/PaywallContext';
+import {
+  PLACEMENT_AI_PERSONALIZED_WORKOUT,
+  PLACEMENT_CUSTOM_TEMPLATE,
+} from '@/lib/placements';
+import {
+  buildPersonalizedWorkout,
+  EQUIPMENT_PICKS,
+  EXPERIENCE_PICKS,
+  getAiQuizPhases,
+  PROGRAM_DAY_OPTIONS,
+  PROGRAM_STYLE_META,
+  type AiQuizPhase,
+  type Equipment,
+  type Experience,
+  type ProgramDay,
+  type ProgramStyle,
+  type ProgramWorkoutInput,
+} from '@/lib/personalizedWorkoutGenerator';
 import { useSession } from '@/contexts/SessionContext';
+import { WorkoutRestTimerBar } from '@/components/WorkoutRestTimerBar';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { AchievementUnlockedModal } from '@/components/AchievementUnlockedModal';
 import {
   apiGetTemplates,
   apiCreateTemplate,
@@ -33,6 +56,7 @@ import {
   apiGetTemplateLibrary,
   apiCopyLibraryTemplate,
 } from '@/lib/api';
+import { queueChallengeCelebrations } from '@/lib/challengeCelebrationStorage';
 import {
   Plus,
   X,
@@ -40,7 +64,6 @@ import {
   Check,
   CheckCircle,
   Trophy,
-  Flame,
   Timer,
   Dumbbell,
   Trash2,
@@ -50,6 +73,10 @@ import {
   Crown,
   Star,
   Search,
+  Sparkles,
+  List,
+  Eye,
+  ExternalLink,
 } from 'lucide-react-native';
 // Simple staggered fade-in component to replace reanimated entering animations
 function FadeInView({ delay = 0, duration = 500, style, children }: {
@@ -188,7 +215,7 @@ const ALL_EXERCISES = COMMON_EXERCISES.flatMap((cat) =>
   cat.exercises.map((name) => ({ name, category: cat.category }))
 );
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // ─── Types ───────────────────────────────────────────
 interface TemplateExercise {
@@ -236,7 +263,7 @@ interface PersonalRecord {
   reps: number;
 }
 
-type Screen = 'templates' | 'create' | 'session' | 'complete';
+type Screen = 'templates' | 'create' | 'session' | 'achievements' | 'ai_quiz';
 type TemplateTab = 'my_workouts' | 'library';
 
 const WORKOUT_NAME_SUGGESTIONS = [
@@ -248,6 +275,9 @@ const WORKOUT_NAME_SUGGESTIONS = [
 export default function TrackScreen() {
   const { profile, refreshProfile } = useAuth();
   const { registerGated } = usePremiumGate();
+  const showPaywall = usePaywall();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // Navigation
   const [screen, setScreen] = useState<Screen>('templates');
@@ -259,6 +289,7 @@ export default function TrackScreen() {
   const [loadingLibrary, setLoadingLibrary] = useState(true);
   const [loadingMoreLibrary, setLoadingMoreLibrary] = useState(false);
   const [copyingLibraryId, setCopyingLibraryId] = useState<string | null>(null);
+  const [libraryPreview, setLibraryPreview] = useState<WorkoutLibraryTemplate | null>(null);
   const [activeTemplateTab, setActiveTemplateTab] = useState<TemplateTab>('my_workouts');
   const [libraryCategory, setLibraryCategory] = useState<string>('all');
   const [librarySearch, setLibrarySearch] = useState('');
@@ -296,12 +327,23 @@ export default function TrackScreen() {
   const [activePrExerciseIdx, setActivePrExerciseIdx] = useState<number | null>(null);
   const [prModalWeight, setPrModalWeight] = useState('');
   const [prModalReps, setPrModalReps] = useState('');
+  /** Bumps when an exercise is newly checked off — drives optional rest timer auto-start */
+  const [restExerciseTick, setRestExerciseTick] = useState(0);
 
   // Exit session modal
   const [showExitModal, setShowExitModal] = useState(false);
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<WorkoutTemplate | null>(null);
+
+  // Create workout: manual vs AI path
+  const [showCreateChoiceModal, setShowCreateChoiceModal] = useState(false);
+  const [aiPhase, setAiPhase] = useState<AiQuizPhase>('style');
+  const [aiProgramStyle, setAiProgramStyle] = useState<ProgramStyle | null>(null);
+  const [aiProgramDay, setAiProgramDay] = useState<ProgramDay | null>(null);
+  const [aiEquipment, setAiEquipment] = useState<Equipment | null>(null);
+  const [aiExperience, setAiExperience] = useState<Experience | null>(null);
+  const [aiGenerating, setAiGenerating] = useState(false);
 
   // Completion
   const [completionData, setCompletionData] = useState<{
@@ -313,14 +355,27 @@ export default function TrackScreen() {
     totalReps: number;
   } | null>(null);
 
-  const [displayXp, setDisplayXp] = useState(0);
+  const [earnedBadges, setEarnedBadges] = useState<
+    { id: string; name: string; description: string; icon: string; xp_reward: number }[]
+  >([]);
+
+  const closeAllTrackModals = useCallback(() => {
+    setLibraryPreview(null);
+    setShowCreateChoiceModal(false);
+    setDeleteTarget(null);
+    setShowExitModal(false);
+    setShowSetPrModal(false);
+    setEarnedBadges([]);
+  }, []);
+
+  useCloseModalsWhenPaywallOpens(closeAllTrackModals);
 
   // Use elapsed from session context (persisted timer)
   const elapsed = session.elapsed;
 
   // Restore session state if we navigate back to Track with an active session
   useEffect(() => {
-    if (session.isActive && screen !== 'session' && screen !== 'complete') {
+    if (session.isActive && screen !== 'session' && screen !== 'achievements') {
       // Reconstruct activeTemplate from the session context
       setActiveTemplate({
         id: session.templateId!,
@@ -439,28 +494,213 @@ export default function TrackScreen() {
   };
 
   // ─── Template CRUD ────────────────────────────────
+  const enterManualCreateWizard = () => {
+    setEditingTemplate(null);
+    setTemplateName('');
+    setTemplateColor(TEMPLATE_COLORS[0]);
+    setTemplateExercises([]);
+    setNewExName('');
+    setNewExSets('3');
+    setNewExReps('10');
+    setWizardStep(1);
+    setWizardPRs({});
+    setShowNameDropdown(false);
+    wizardProgressAnim.setValue(0.33);
+    wizardSlideAnim.setValue(0);
+    setScreen('create');
+  };
+
   const openCreateTemplate = () => {
-    const run = () => {
-      setEditingTemplate(null);
-      setTemplateName('');
-      setTemplateColor(TEMPLATE_COLORS[0]);
-      setTemplateExercises([]);
-      setNewExName('');
-      setNewExSets('3');
-      setNewExReps('10');
-      setWizardStep(1);
-      setWizardPRs({});
-      setShowNameDropdown(false);
-      wizardProgressAnim.setValue(0.33);
-      wizardSlideAnim.setValue(0);
-      setScreen('create');
-    };
     if (profile?.is_pro || templates.length === 0) {
-      run();
+      enterManualCreateWizard();
       return;
     }
-    void registerGated(PLACEMENT_CUSTOM_TEMPLATE, run);
+    void registerGated(PLACEMENT_CUSTOM_TEMPLATE, enterManualCreateWizard);
   };
+
+  const openCreateWorkoutChooser = () => {
+    setShowCreateChoiceModal(true);
+  };
+
+  const chooseManualCreate = () => {
+    setShowCreateChoiceModal(false);
+    openCreateTemplate();
+  };
+
+  const startAiPersonalizedFlow = () => {
+    setShowCreateChoiceModal(false);
+    setAiPhase('style');
+    setAiProgramStyle(null);
+    setAiProgramDay(null);
+    setAiEquipment(null);
+    setAiExperience(null);
+    setAiGenerating(false);
+    setScreen('ai_quiz');
+  };
+
+  const openAiPersonalizedWorkout = () => {
+    setShowCreateChoiceModal(false);
+    void registerGated(PLACEMENT_AI_PERSONALIZED_WORKOUT, startAiPersonalizedFlow);
+  };
+
+  const exitAiQuiz = () => {
+    setAiPhase('style');
+    setAiProgramStyle(null);
+    setAiProgramDay(null);
+    setAiEquipment(null);
+    setAiExperience(null);
+    setAiGenerating(false);
+    setScreen('templates');
+  };
+
+  const applyGeneratedTemplate = (input: ProgramWorkoutInput) => {
+    const gen = buildPersonalizedWorkout(input);
+    setEditingTemplate(null);
+    setTemplateName(gen.name);
+    setTemplateColor(gen.color);
+    setTemplateExercises(
+      gen.exercises.map((e, i) => ({
+        name: e.name,
+        default_sets: e.default_sets,
+        default_reps: e.default_reps,
+        order: i,
+      })),
+    );
+    setNewExName('');
+    setNewExSets('3');
+    setNewExReps('10');
+    setWizardPRs({});
+    setShowNameDropdown(false);
+    setWizardStep(2);
+    wizardProgressAnim.setValue(2 / 3);
+    wizardSlideAnim.setValue(0);
+    setAiPhase('style');
+    setAiProgramStyle(null);
+    setAiProgramDay(null);
+    setAiEquipment(null);
+    setAiExperience(null);
+    setAiGenerating(false);
+    setScreen('create');
+  };
+
+  const aiQuizPhases = useMemo(() => getAiQuizPhases(aiProgramStyle), [aiProgramStyle]);
+  const aiStepIndex = Math.max(0, aiQuizPhases.indexOf(aiPhase)) + 1;
+  const aiStepTotal = aiQuizPhases.length;
+
+  const goBackAiQuiz = () => {
+    if (aiPhase === 'style') {
+      exitAiQuiz();
+      return;
+    }
+    if (aiPhase === 'experience') {
+      setAiPhase('equipment');
+      return;
+    }
+    if (aiPhase === 'equipment') {
+      if (aiProgramStyle === 'full_body') {
+        setAiPhase('style');
+        setAiEquipment(null);
+        setAiProgramDay(null);
+      } else {
+        setAiPhase('day');
+        setAiEquipment(null);
+      }
+      return;
+    }
+    if (aiPhase === 'day') {
+      setAiPhase('style');
+      setAiProgramDay(null);
+    }
+  };
+
+  const goNextAiQuiz = () => {
+    if (aiPhase === 'style') {
+      if (!aiProgramStyle) return;
+      if (aiProgramStyle === 'full_body') {
+        setAiProgramDay('full_body_only');
+        setAiPhase('equipment');
+      } else {
+        setAiPhase('day');
+      }
+      return;
+    }
+    if (aiPhase === 'day') {
+      if (!aiProgramDay) return;
+      setAiPhase('equipment');
+      return;
+    }
+    if (aiPhase === 'equipment') {
+      if (!aiEquipment) return;
+      setAiPhase('experience');
+      return;
+    }
+    if (aiPhase === 'experience') {
+      if (
+        !aiProgramStyle ||
+        !aiProgramDay ||
+        !aiEquipment ||
+        !aiExperience
+      ) {
+        return;
+      }
+      const input: ProgramWorkoutInput = {
+        programStyle: aiProgramStyle,
+        programDay: aiProgramDay,
+        equipment: aiEquipment,
+        experience: aiExperience,
+      };
+      setAiGenerating(true);
+      setTimeout(() => {
+        applyGeneratedTemplate(input);
+      }, 900);
+    }
+  };
+
+  const aiPhaseTitle = (() => {
+    switch (aiPhase) {
+      case 'style':
+        return 'Choose a split';
+      case 'day':
+        return 'Which day is this?';
+      case 'equipment':
+        return 'What equipment do you have?';
+      case 'experience':
+        return 'How long have you trained?';
+      default:
+        return '';
+    }
+  })();
+
+  const aiPhaseSubtitle = (() => {
+    switch (aiPhase) {
+      case 'style':
+        return 'Real program names — tap one that sounds like you.';
+      case 'day':
+        return 'Save one workout at a time (e.g. your push day). Add another template later for pull, etc.';
+      case 'equipment':
+        return 'We only show moves you can actually do.';
+      case 'experience':
+        return 'Sets and reps adjust automatically — you can edit after.';
+      default:
+        return '';
+    }
+  })();
+
+  const canGoNextAiQuiz = (() => {
+    if (aiGenerating) return false;
+    switch (aiPhase) {
+      case 'style':
+        return aiProgramStyle != null;
+      case 'day':
+        return aiProgramDay != null;
+      case 'equipment':
+        return aiEquipment != null;
+      case 'experience':
+        return aiExperience != null;
+      default:
+        return false;
+    }
+  })();
 
   const openEditTemplate = (t: WorkoutTemplate) => {
     setEditingTemplate(t);
@@ -611,25 +851,24 @@ export default function TrackScreen() {
     }
   };
 
-  const copyLibraryWorkout = async (libraryTemplateId: string) => {
+  const copyLibraryWorkout = async (libraryTemplateId: string): Promise<boolean> => {
     setCopyingLibraryId(libraryTemplateId);
     try {
       const { error } = await apiCopyLibraryTemplate(libraryTemplateId);
       if (error) {
         if (error?.code === 'template_limit') {
-          Alert.alert(
-            'Template Limit Reached',
-            error?.detail || 'Upgrade to add more saved workouts from the library.'
-          );
-          return;
+          showPaywall(() => void copyLibraryWorkout(libraryTemplateId));
+          return false;
         }
         Alert.alert('Error', 'Could not copy this workout right now.');
-        return;
+        return false;
       }
       await loadTemplates();
       Alert.alert('Added', 'Workout added to your workouts.');
+      return true;
     } catch {
       Alert.alert('Error', 'Could not copy this workout right now.');
+      return false;
     } finally {
       setCopyingLibraryId(null);
     }
@@ -661,6 +900,7 @@ export default function TrackScreen() {
     }));
     setActiveTemplate(template);
     setSessionExercises(exercises);
+    setRestExerciseTick(0);
     setScreen('session');
 
     // Persist to global context (survives background/tab switching)
@@ -697,11 +937,16 @@ export default function TrackScreen() {
 
   const toggleExercise = async (idx: number) => {
     let updated = [...sessionExercises];
+    const wasComplete = updated[idx].completed;
     updated[idx] = { ...updated[idx], completed: !updated[idx].completed };
 
     // Check for PR when marking as complete
     if (updated[idx].completed && updated[idx].weight) {
       updated = await checkAndSavePR(updated, idx);
+    }
+
+    if (!wasComplete && updated[idx].completed) {
+      setRestExerciseTick((t) => t + 1);
     }
 
     setSessionExercises(updated);
@@ -776,9 +1021,10 @@ export default function TrackScreen() {
         sets: e.targetSets,
         reps: e.targetReps,
         weight: e.weight ? parseFloat(e.weight) : undefined,
+        is_new_pr: prNamesFromFinish.has(e.name),
       }));
 
-      await apiCreateWorkout({
+      const { data: workoutResult } = await apiCreateWorkout({
         workout_date: new Date().toISOString().split('T')[0],
         exercises,
         total_sets: totalSets,
@@ -788,6 +1034,16 @@ export default function TrackScreen() {
         xp_earned: xp,
         notes: activeTemplate?.name || '',
       });
+
+      const nc = workoutResult?.newly_completed_challenges ?? [];
+      if (nc.length > 0) {
+        await queueChallengeCelebrations(nc);
+      }
+
+      const newBadges = workoutResult?.newly_earned_badges ?? [];
+      if (newBadges.length > 0) {
+        setEarnedBadges(newBadges);
+      }
 
       setCompletionData({
         xp,
@@ -801,20 +1057,21 @@ export default function TrackScreen() {
       // End the global session (clears storage/banner)
       await session.endSession();
 
-      // Animate XP count-up
-      setDisplayXp(0);
-      setScreen('complete');
+      const navData = {
+        xp,
+        exercises: completedExercises.length,
+        duration: durationMin,
+        totalSets,
+        totalReps,
+        newPRs,
+        templateName: activeTemplate?.name || 'Workout',
+      };
 
-      // Delay the XP animation so it starts after the title fades in
-      setTimeout(() => {
-        const step = Math.max(1, Math.ceil(xp / 60));
-        let current = 0;
-        const interval = setInterval(() => {
-          current = Math.min(current + step, xp);
-          setDisplayXp(current);
-          if (current >= xp) clearInterval(interval);
-        }, 25);
-      }, 600);
+      if (newBadges.length > 0) {
+        setScreen('achievements');
+      } else {
+        navigateToCompletion(navData);
+      }
 
       await refreshProfile();
       // Reload PRs so they're up-to-date for the next session
@@ -824,12 +1081,39 @@ export default function TrackScreen() {
     }
   };
 
-  const finishCompletion = () => {
+  const navigateToCompletion = (data?: {
+    xp: number;
+    exercises: number;
+    duration: number;
+    totalSets: number;
+    totalReps: number;
+    newPRs: string[];
+    templateName: string;
+  }) => {
+    const d = data || (completionData ? { ...completionData, templateName: activeTemplate?.name || 'Workout' } : null);
+    if (!d) return;
+    const params: Record<string, string> = {
+      xp: String(d.xp),
+      exercises: String(d.exercises),
+      duration: String(d.duration),
+      totalSets: String(d.totalSets),
+      totalReps: String(d.totalReps),
+      templateName: d.templateName,
+    };
+    if (d.newPRs.length > 0) {
+      params.newPRs = JSON.stringify(d.newPRs);
+    }
     setCompletionData(null);
+    setEarnedBadges([]);
     setActiveTemplate(null);
     setSessionExercises([]);
     setScreen('templates');
-    loadTemplates();
+    router.push({ pathname: '/workout-complete', params });
+  };
+
+  const onAchievementsDismissed = () => {
+    setEarnedBadges([]);
+    navigateToCompletion();
   };
 
   // ─── Animated styles (no longer using spring) ─────
@@ -840,6 +1124,174 @@ export default function TrackScreen() {
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingText}>Loading...</Text>
       </View>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════
+  //  SCREEN: AI PERSONALIZED WORKOUT (QUESTIONNAIRE)
+  // ═══════════════════════════════════════════════════
+  if (screen === 'ai_quiz') {
+    const dayChoices =
+      aiProgramStyle && aiPhase === 'day'
+        ? PROGRAM_DAY_OPTIONS[aiProgramStyle]
+        : null;
+
+    return (
+      <LinearGradient colors={['#1E1E1E', '#0A0A0A']} style={styles.container}>
+        <View style={styles.wizardHeader}>
+          <TouchableOpacity onPress={goBackAiQuiz} style={styles.backButton}>
+            <ChevronLeft color="#FFFFFF" size={24} />
+          </TouchableOpacity>
+          <View style={styles.wizardStepInfo}>
+            <Text style={styles.wizardStepLabel}>
+              Step {aiStepIndex} of {aiStepTotal}
+            </Text>
+            <Text style={styles.wizardStepTitle}>Workout builder</Text>
+          </View>
+          <View style={{ width: 40 }} />
+        </View>
+
+        <View style={styles.wizardProgressBg}>
+          <View
+            style={[
+              styles.wizardProgressFill,
+              {
+                width: `${(aiStepIndex / Math.max(1, aiStepTotal)) * 100}%`,
+              },
+            ]}
+          />
+        </View>
+
+        {aiGenerating ? (
+          <View style={styles.aiGeneratingWrap}>
+            <ActivityIndicator size="large" color="#845EF7" />
+            <Text style={styles.aiGeneratingTitle}>Building your workout</Text>
+            <Text style={styles.aiGeneratingSub}>
+              Lining up exercises for the split you picked…
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.aiQuizContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.aiQuizBadgeRow}>
+              <Sparkles color="#C4B5FD" size={18} />
+              <Text style={styles.aiQuizBadgeText}>Classic splits · plain English</Text>
+            </View>
+
+            <Text style={styles.wizardQuestion}>{aiPhaseTitle}</Text>
+            <Text style={styles.wizardSubtext}>{aiPhaseSubtitle}</Text>
+
+            {aiPhase === 'style' ? (
+              <View style={styles.aiOptionsCol}>
+                {PROGRAM_STYLE_META.map((opt) => {
+                  const selected = aiProgramStyle === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.aiOptionCard, selected && styles.aiOptionCardSelected]}
+                      onPress={() => {
+                        setAiProgramStyle(opt.value);
+                        setAiProgramDay(null);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[styles.aiOptionLabel, selected && styles.aiOptionLabelSelected]}
+                      >
+                        {opt.title}
+                      </Text>
+                      <Text style={styles.aiOptionBlurb}>{opt.blurb}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {aiPhase === 'day' && dayChoices ? (
+              <View style={styles.aiOptionsCol}>
+                {dayChoices.map((opt) => {
+                  const selected = aiProgramDay === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.aiOptionCard, selected && styles.aiOptionCardSelected]}
+                      onPress={() => setAiProgramDay(opt.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[styles.aiOptionLabel, selected && styles.aiOptionLabelSelected]}
+                      >
+                        {opt.title}
+                      </Text>
+                      <Text style={styles.aiOptionBlurb}>{opt.blurb}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {aiPhase === 'equipment' ? (
+              <View style={styles.aiOptionsCol}>
+                {EQUIPMENT_PICKS.map((opt) => {
+                  const selected = aiEquipment === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.aiOptionCard, selected && styles.aiOptionCardSelected]}
+                      onPress={() => setAiEquipment(opt.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[styles.aiOptionLabel, selected && styles.aiOptionLabelSelected]}
+                      >
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.aiOptionBlurb}>{opt.blurb}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {aiPhase === 'experience' ? (
+              <View style={styles.aiOptionsCol}>
+                {EXPERIENCE_PICKS.map((opt) => {
+                  const selected = aiExperience === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.aiOptionCard, selected && styles.aiOptionCardSelected]}
+                      onPress={() => setAiExperience(opt.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[styles.aiOptionLabel, selected && styles.aiOptionLabelSelected]}
+                      >
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.aiOptionBlurb}>{opt.blurb}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            <TouchableOpacity
+              style={[styles.wizardNextBtn, !canGoNextAiQuiz && { opacity: 0.4 }]}
+              onPress={goNextAiQuiz}
+              disabled={!canGoNextAiQuiz}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.wizardNextBtnText}>
+                {aiPhase === 'experience' ? 'Generate my workout' : 'Next'}
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+      </LinearGradient>
     );
   }
 
@@ -1303,45 +1755,46 @@ export default function TrackScreen() {
 
     return (
       <LinearGradient colors={['#1E1E1E', '#0A0A0A']} style={styles.container}>
-        {/* Session Header */}
-        <View style={styles.sessionHeader}>
-          <View style={styles.sessionHeaderTop}>
-            <TouchableOpacity onPress={() => setShowExitModal(true)}>
-              <X color="#999999" size={24} />
-            </TouchableOpacity>
-            <View style={styles.timerContainer}>
-              <Timer color="#4C91FF" size={18} />
-              <Text style={styles.timerText}>{formatTime(elapsed)}</Text>
+        <View style={styles.sessionLayoutRoot}>
+          {/* Session Header */}
+          <View style={styles.sessionHeader}>
+            <View style={styles.sessionHeaderTop}>
+              <TouchableOpacity onPress={() => setShowExitModal(true)}>
+                <X color="#999999" size={24} />
+              </TouchableOpacity>
+              <View style={styles.timerContainer}>
+                <Timer color="#4C91FF" size={18} />
+                <Text style={styles.timerText}>{formatTime(elapsed)}</Text>
+              </View>
             </View>
-          </View>
 
-          <Text style={[styles.sessionName, { color: activeTemplate.color }]}>
-            {activeTemplate.name}
+            <Text style={[styles.sessionName, { color: activeTemplate.color }]}>
+              {activeTemplate.name}
             </Text>
 
-          {/* Progress Bar */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                {
-                  width: `${progress * 100}%`,
-                  backgroundColor: activeTemplate.color,
-                },
-              ]}
-            />
+            <View style={styles.progressBarBg}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${progress * 100}%`,
+                    backgroundColor: activeTemplate.color,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.progressText}>
+              {completedCount} of {sessionExercises.length} exercises
+            </Text>
           </View>
-          <Text style={styles.progressText}>
-            {completedCount} of {sessionExercises.length} exercises
-                  </Text>
-                </View>
 
-        {/* Exercise List */}
-        <ScrollView
-          contentContainerStyle={styles.sessionScroll}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
+          {/* Exercise list — scrolls above the fixed bottom dock (no overlap) */}
+          <ScrollView
+            style={styles.sessionScrollView}
+            contentContainerStyle={styles.sessionScrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           {sessionExercises.map((ex, idx) => {
             const currentPR = prs[ex.name];
             const enteredWeight = ex.weight ? parseFloat(ex.weight) : 0;
@@ -1426,24 +1879,31 @@ export default function TrackScreen() {
             );
           })}
 
-          <View style={{ height: 120 }} />
-        </ScrollView>
+          </ScrollView>
 
-        {/* Finish Button */}
-        <View style={styles.finishButtonContainer}>
-          <TouchableOpacity
-            style={[
-              styles.finishButton,
-              { backgroundColor: activeTemplate.color },
-              completedCount === 0 && { opacity: 0.4 },
-            ]}
-            onPress={finishSession}
-            disabled={completedCount === 0}
+          {/* Fixed dock: rest timer + finish — not stacked over exercise cards */}
+          <View
+            style={[styles.sessionBottomDock, { paddingBottom: 10 + insets.bottom }]}
           >
-            <Check color="#FFFFFF" size={22} />
-            <Text style={styles.finishButtonText}>Finish Workout</Text>
-          </TouchableOpacity>
-                  </View>
+            <WorkoutRestTimerBar
+              accentColor={activeTemplate.color}
+              completedExerciseTick={restExerciseTick}
+            />
+            <TouchableOpacity
+              style={[
+                styles.finishButton,
+                { backgroundColor: activeTemplate.color },
+                completedCount === 0 && { opacity: 0.4 },
+              ]}
+              onPress={finishSession}
+              disabled={completedCount === 0}
+              activeOpacity={0.9}
+            >
+              <Check color="#FFFFFF" size={22} />
+              <Text style={styles.finishButtonText}>Finish Workout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <Modal
           visible={showSetPrModal}
@@ -1536,118 +1996,16 @@ export default function TrackScreen() {
   }
 
   // ═══════════════════════════════════════════════════
-  //  SCREEN: COMPLETION (premium staggered fade-in)
+  //  SCREEN: ACHIEVEMENTS (before completion)
   // ═══════════════════════════════════════════════════
-  if (screen === 'complete' && completionData) {
-    const DURATION = 500;
-    const BASE_DELAY = 0;
-
+  if (screen === 'achievements' && earnedBadges.length > 0) {
     return (
-      <LinearGradient colors={['#0D0D0D', '#141414', '#1A1A1A']} style={styles.container}>
-        <ScrollView
-          contentContainerStyle={styles.completionContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Checkmark / Trophy icon */}
-          <FadeInView delay={BASE_DELAY} duration={DURATION} style={styles.trophyCircle}>
-            <Trophy color="#FFB547" size={44} />
-          </FadeInView>
-
-          {/* Title */}
-          <FadeInView delay={BASE_DELAY + 200} duration={DURATION}>
-            <Text style={styles.completionTitle}>Workout Complete</Text>
-          </FadeInView>
-
-          {/* Subtitle with template name */}
-          {activeTemplate && (
-            <FadeInView delay={BASE_DELAY + 300} duration={DURATION}>
-              <Text style={styles.completionSubtitle}>{activeTemplate.name}</Text>
-            </FadeInView>
-          )}
-
-          {/* XP count-up */}
-          <FadeInView delay={BASE_DELAY + 450} duration={DURATION} style={styles.xpRow}>
-            <Zap color="#FFB547" size={26} />
-            <Text style={styles.xpAmount}>+{displayXp}</Text>
-            <Text style={styles.xpLabel}>XP</Text>
-          </FadeInView>
-
-          {/* Divider */}
-          <FadeInView delay={BASE_DELAY + 600} duration={300} style={styles.divider}>
-            <View />
-          </FadeInView>
-
-          {/* Stats cards – staggered 100ms apart */}
-          <FadeInView delay={BASE_DELAY + 700} duration={DURATION} style={styles.statsGrid}>
-            <View style={styles.statBox}>
-              <Dumbbell color="#4C91FF" size={22} />
-              <Text style={styles.statNumber}>{completionData.exercises}</Text>
-              <Text style={styles.statLabel}>Exercises</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Timer color="#51CF66" size={22} />
-              <Text style={styles.statNumber}>{completionData.duration}</Text>
-              <Text style={styles.statLabel}>Minutes</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Flame color="#FF6B6B" size={22} />
-              <Text style={styles.statNumber}>{completionData.totalSets}</Text>
-              <Text style={styles.statLabel}>Sets</Text>
-            </View>
-          </FadeInView>
-
-          <FadeInView delay={BASE_DELAY + 800} duration={DURATION} style={styles.statsGrid}>
-            <View style={[styles.statBox, styles.statBoxWide]}>
-              <Text style={styles.statNumber}>{completionData.totalReps}</Text>
-              <Text style={styles.statLabel}>Total Reps</Text>
-            </View>
-          </FadeInView>
-
-          {/* PRs section */}
-          {completionData.newPRs.length > 0 && (
-            <FadeInView delay={BASE_DELAY + 1000} duration={DURATION} style={styles.prSection}>
-              <View style={styles.prHeader}>
-                <Crown color="#FFB547" size={20} />
-                <Text style={styles.prTitle}>New Personal Records</Text>
-              </View>
-              {completionData.newPRs.map((name, idx) => (
-                <FadeInView
-                  key={name}
-                  delay={BASE_DELAY + 1100 + idx * 100}
-                  duration={400}
-                  style={styles.prItemRow}
-                >
-                  <View style={styles.prDot} />
-                  <Text style={styles.prItem}>{name}</Text>
-                </FadeInView>
-              ))}
-            </FadeInView>
-          )}
-
-          {/* Streak */}
-          {profile && profile.current_streak > 0 && (
-            <FadeInView delay={BASE_DELAY + 1200} duration={DURATION} style={styles.streakRow}>
-              <Flame color="#FF922B" size={20} />
-              <Text style={styles.streakText}>
-                {profile.current_streak} day streak
-                  </Text>
-            </FadeInView>
-          )}
-
-          {/* Done button – fades in last */}
-          <FadeInView delay={BASE_DELAY + 1400} duration={DURATION} style={{ width: '100%', paddingHorizontal: 24, marginTop: 20 }}>
-            <TouchableOpacity
-              style={styles.doneButton}
-              onPress={finishCompletion}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.doneButtonText}>Done</Text>
-            </TouchableOpacity>
-          </FadeInView>
-
-          <View style={{ height: 60 }} />
-        </ScrollView>
-      </LinearGradient>
+      <View style={[styles.container, { backgroundColor: '#0D0D0D' }]}>
+        <AchievementUnlockedModal
+          badges={earnedBadges}
+          onDismiss={onAchievementsDismissed}
+        />
+      </View>
     );
   }
 
@@ -1663,7 +2021,22 @@ export default function TrackScreen() {
         scrollEventThrottle={120}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Track</Text>
+          <View style={styles.headerTitleRow}>
+            <Text style={[styles.title, { flex: 1 }]} numberOfLines={1}>
+              Track
+            </Text>
+            <TouchableOpacity
+              style={styles.historyHeaderBtn}
+              onPress={() => router.push('/workout-history')}
+              activeOpacity={0.8}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="View all logged workouts"
+            >
+              <List color="#4C91FF" size={20} />
+              <Text style={styles.historyHeaderBtnText}>History</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.subtitle}>
             {activeTemplateTab === 'my_workouts'
               ? templates.length > 0
@@ -1763,7 +2136,7 @@ export default function TrackScreen() {
               </Card>
             ))}
 
-            <TouchableOpacity onPress={openCreateTemplate}>
+            <TouchableOpacity onPress={openCreateWorkoutChooser}>
               <Card style={styles.addTemplateCard}>
                 <Plus color="#4C91FF" size={28} />
                 <Text style={styles.addTemplateText}>Create New Workout</Text>
@@ -1856,17 +2229,39 @@ export default function TrackScreen() {
                       </Text>
                     </View>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.copyButton, { backgroundColor: t.color }]}
-                    onPress={() => copyLibraryWorkout(t.id)}
-                    activeOpacity={0.85}
-                    disabled={copyingLibraryId === t.id}
-                  >
-                    <Plus color="#FFFFFF" size={16} />
-                    <Text style={styles.copyButtonText}>
-                      {copyingLibraryId === t.id ? 'Adding...' : 'Add to My Workouts'}
-                    </Text>
-                  </TouchableOpacity>
+                  <View style={styles.libraryCardActions}>
+                    <TouchableOpacity
+                      style={[styles.libraryViewButton, { borderColor: `${t.color}AA` }]}
+                      onPress={() => setLibraryPreview(t)}
+                      activeOpacity={0.85}
+                    >
+                      <Eye color={t.color} size={16} style={styles.libraryActionIcon} />
+                      <Text
+                        style={[styles.libraryViewButtonText, { color: t.color }]}
+                        numberOfLines={2}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.82}
+                      >
+                        View workout
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.libraryAddButton, { backgroundColor: t.color }]}
+                      onPress={() => copyLibraryWorkout(t.id)}
+                      activeOpacity={0.85}
+                      disabled={copyingLibraryId === t.id}
+                    >
+                      <Plus color="#FFFFFF" size={16} style={styles.libraryActionIcon} />
+                      <Text
+                        style={styles.copyButtonText}
+                        numberOfLines={2}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.78}
+                      >
+                        {copyingLibraryId === t.id ? 'Adding...' : 'Add to My Workouts'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </Card>
               ))
             )}
@@ -1879,6 +2274,168 @@ export default function TrackScreen() {
           </>
         )}
       </ScrollView>
+
+      <Modal
+        visible={showCreateChoiceModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateChoiceModal(false)}
+      >
+        <Pressable
+          style={styles.deleteModalOverlay}
+          onPress={() => setShowCreateChoiceModal(false)}
+        >
+          <Pressable style={styles.createChoiceBox} onPress={() => null}>
+            <Text style={styles.createChoiceTitle}>Create workout</Text>
+            <Text style={styles.createChoiceSubtitle}>
+              Start from scratch or let us draft a session from your habits.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.createChoicePrimary}
+              onPress={chooseManualCreate}
+              activeOpacity={0.88}
+            >
+              <Plus color="#FFFFFF" size={20} />
+              <Text style={styles.createChoicePrimaryText}>Build from scratch</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.createChoiceOr}>OR</Text>
+
+            <TouchableOpacity
+              style={styles.createChoiceAi}
+              onPress={openAiPersonalizedWorkout}
+              activeOpacity={0.88}
+            >
+              <Sparkles color="#C4B5FD" size={20} />
+              <View style={styles.createChoiceAiTextCol}>
+                <Text style={styles.createChoiceAiTitle}>Personalized with AI</Text>
+                <Text style={styles.createChoiceAiSub}>
+                  Short quiz → custom exercises & volume
+                </Text>
+              </View>
+              {!profile?.is_pro ? (
+                <View style={styles.createChoiceProPill}>
+                  <Crown color="#FFB547" size={12} />
+                  <Text style={styles.createChoiceProPillText}>Pro</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.createChoiceDismiss}
+              onPress={() => setShowCreateChoiceModal(false)}
+            >
+              <Text style={styles.createChoiceDismissText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Library workout preview */}
+      <Modal
+        visible={!!libraryPreview}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLibraryPreview(null)}
+      >
+        <Pressable style={styles.deleteModalOverlay} onPress={() => setLibraryPreview(null)}>
+          <Pressable
+            style={[styles.libraryPreviewBox, { maxHeight: SCREEN_HEIGHT * 0.78 }]}
+            onPress={() => null}
+          >
+            {libraryPreview && (
+              <>
+                <View style={styles.libraryPreviewHeader}>
+                  <View
+                    style={[
+                      styles.templateIcon,
+                      { backgroundColor: libraryPreview.color + '20' },
+                    ]}
+                  >
+                    <Dumbbell color={libraryPreview.color} size={22} />
+                  </View>
+                  <View style={styles.libraryPreviewTitleBlock}>
+                    <Text style={styles.libraryPreviewTitle} numberOfLines={2}>
+                      {libraryPreview.name}
+                    </Text>
+                    <Text style={styles.libraryPreviewMeta}>
+                      {libraryPreview.category.toUpperCase()}
+                      {libraryPreview.source_name ? ` · ${libraryPreview.source_name}` : ''}
+                    </Text>
+                    {!!libraryPreview.subtitle && (
+                      <Text style={styles.libraryPreviewSubtitle}>{libraryPreview.subtitle}</Text>
+                    )}
+                  </View>
+                </View>
+                {!!libraryPreview.source_url?.trim() && (
+                  <TouchableOpacity
+                    style={styles.libraryPreviewSourceLink}
+                    onPress={() => Linking.openURL(libraryPreview.source_url)}
+                    activeOpacity={0.8}
+                  >
+                    <ExternalLink color="#4C91FF" size={14} />
+                    <Text style={styles.libraryPreviewSourceLinkText}>Open source</Text>
+                  </TouchableOpacity>
+                )}
+                <Text style={styles.libraryPreviewSectionLabel}>Exercises</Text>
+                <ScrollView
+                  style={[styles.libraryPreviewScroll, { maxHeight: SCREEN_HEIGHT * 0.4 }]}
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled
+                >
+                  {[...(libraryPreview.exercises || [])]
+                    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                    .map((ex, idx) => (
+                      <View key={`${ex.name}-${idx}`} style={styles.libraryPreviewRow}>
+                        <Text style={styles.libraryPreviewIdx}>{idx + 1}</Text>
+                        <View style={styles.libraryPreviewExBody}>
+                          <Text style={styles.libraryPreviewExName}>{ex.name}</Text>
+                          <Text style={styles.libraryPreviewExSets}>
+                            {typeof ex.default_sets === 'number' ? ex.default_sets : '—'} sets ×{' '}
+                            {typeof ex.default_reps === 'number' ? ex.default_reps : '—'} reps
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                </ScrollView>
+                <View style={styles.libraryPreviewFooter}>
+                  <TouchableOpacity
+                    style={styles.libraryPreviewCloseBtn}
+                    onPress={() => setLibraryPreview(null)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.libraryPreviewCloseText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.libraryPreviewAddBtn,
+                      { backgroundColor: libraryPreview.color },
+                    ]}
+                    onPress={async () => {
+                      const id = libraryPreview.id;
+                      const ok = await copyLibraryWorkout(id);
+                      if (ok) setLibraryPreview(null);
+                    }}
+                    activeOpacity={0.85}
+                    disabled={copyingLibraryId === libraryPreview.id}
+                  >
+                    <Plus color="#FFFFFF" size={16} style={styles.libraryActionIcon} />
+                    <Text
+                      style={styles.libraryPreviewAddText}
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.78}
+                    >
+                      {copyingLibraryId === libraryPreview.id ? 'Adding...' : 'Add to My Workouts'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal
@@ -1968,6 +2525,28 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   header: { marginBottom: 28 },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  historyHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#4C91FF18',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4C91FF44',
+  },
+  historyHeaderBtnText: {
+    color: '#CFE2FF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   title: {
     color: '#FFFFFF',
     fontSize: 32,
@@ -2073,6 +2652,131 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: '600',
   },
+  libraryPreviewBox: {
+    width: '88%',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#2D2D2D',
+  },
+  libraryPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  libraryPreviewTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  libraryPreviewTitle: {
+    color: '#FFFFFF',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  libraryPreviewMeta: {
+    color: '#999999',
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  libraryPreviewSubtitle: {
+    color: '#777777',
+    fontSize: 13,
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  libraryPreviewSourceLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
+  libraryPreviewSourceLinkText: {
+    color: '#4C91FF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  libraryPreviewSectionLabel: {
+    color: '#AAAAAA',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  libraryPreviewScroll: {
+    flexGrow: 0,
+  },
+  libraryPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#333333',
+  },
+  libraryPreviewIdx: {
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '700',
+    width: 26,
+    paddingTop: 2,
+  },
+  libraryPreviewExBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  libraryPreviewExName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  libraryPreviewExSets: {
+    color: '#888888',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  libraryPreviewFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  libraryPreviewCloseBtn: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#3A3A3A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  libraryPreviewCloseText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  libraryPreviewAddBtn: {
+    flex: 1.2,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  libraryPreviewAddText: {
+    flex: 1,
+    minWidth: 0,
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   templateRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2119,19 +2823,53 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
   },
-  copyButton: {
+  libraryCardActions: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+    marginTop: 14,
+  },
+  libraryActionIcon: {
+    flexShrink: 0,
+  },
+  libraryViewButton: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    marginTop: 14,
-    paddingVertical: 12,
+    gap: 5,
+    paddingVertical: 11,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    backgroundColor: 'transparent',
+  },
+  libraryViewButtonText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  libraryAddButton: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 11,
+    paddingHorizontal: 6,
     borderRadius: 10,
   },
   copyButtonText: {
+    flex: 1,
+    minWidth: 0,
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
+    textAlign: 'center',
   },
   startButtonText: {
     color: '#FFFFFF',
@@ -2392,9 +3130,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 8,
   },
-  sessionScroll: {
+  sessionLayoutRoot: {
+    flex: 1,
+  },
+  sessionScrollView: {
+    flex: 1,
+  },
+  sessionScrollContent: {
     paddingHorizontal: 20,
     paddingTop: 8,
+    paddingBottom: 12,
+    flexGrow: 1,
+  },
+  sessionBottomDock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#2F2F2F',
+    backgroundColor: '#101010',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 10,
   },
   sessionExCard: {
     flexDirection: 'row',
@@ -2507,12 +3261,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  finishButtonContainer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 20,
-    right: 20,
-  },
   finishButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2524,161 +3272,6 @@ const styles = StyleSheet.create({
   finishButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: '700',
-  },
-
-  // ── Completion (premium staggered fade-in) ──
-  completionContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 80,
-    paddingBottom: 40,
-  },
-  trophyCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: 'rgba(255, 181, 71, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 181, 71, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  completionTitle: {
-    color: '#FFFFFF',
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-    marginBottom: 4,
-  },
-  completionSubtitle: {
-    color: '#666',
-    fontSize: 15,
-    fontWeight: '500',
-    marginBottom: 20,
-  },
-  xpRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-    marginBottom: 24,
-  },
-  xpAmount: {
-    color: '#FFB547',
-    fontSize: 40,
-    fontWeight: '800',
-    fontVariant: ['tabular-nums'] as any,
-  },
-  xpLabel: {
-    color: '#FFB547',
-    fontSize: 18,
-    fontWeight: '600',
-    opacity: 0.8,
-  },
-  divider: {
-    width: '60%',
-    height: 1,
-    backgroundColor: '#2A2A2A',
-    marginBottom: 24,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-    marginBottom: 10,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 14,
-    paddingVertical: 18,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#222',
-  },
-  statBoxWide: {
-    flex: 1,
-  },
-  statNumber: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'] as any,
-  },
-  statLabel: {
-    color: '#777',
-    fontSize: 12,
-    fontWeight: '500',
-    textTransform: 'uppercase' as any,
-    letterSpacing: 0.5,
-  },
-  prSection: {
-    width: '100%',
-    backgroundColor: 'rgba(255, 181, 71, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 181, 71, 0.15)',
-    borderRadius: 14,
-    padding: 16,
-    marginTop: 14,
-    marginBottom: 14,
-  },
-  prHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  prTitle: {
-    color: '#FFB547',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  prItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 5,
-  },
-  prDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#FFB547',
-  },
-  prItem: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  streakRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(255, 146, 43, 0.08)',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 20,
-    marginTop: 10,
-  },
-  streakText: {
-    color: '#FF922B',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  doneButton: {
-    backgroundColor: '#4C91FF',
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  doneButtonText: {
-    color: '#FFFFFF',
-    fontSize: 17,
     fontWeight: '700',
   },
 
@@ -3008,5 +3601,168 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  createChoiceBox: {
+    width: '88%',
+    maxWidth: 400,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: '#2E2E2E',
+  },
+  createChoiceTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  createChoiceSubtitle: {
+    color: '#888',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 22,
+  },
+  createChoicePrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#4C91FF',
+    paddingVertical: 16,
+    borderRadius: 14,
+  },
+  createChoicePrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  createChoiceOr: {
+    color: '#555',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginVertical: 16,
+  },
+  createChoiceAi: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#2B2248',
+    borderWidth: 1,
+    borderColor: '#5B4D9A88',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+  },
+  createChoiceAiTextCol: {
+    flex: 1,
+  },
+  createChoiceAiTitle: {
+    color: '#E9D5FF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  createChoiceAiSub: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  createChoiceProPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 181, 71, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  createChoiceProPillText: {
+    color: '#FFB547',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  createChoiceDismiss: {
+    marginTop: 18,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  createChoiceDismissText: {
+    color: '#666',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  aiQuizContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 40,
+    flexGrow: 1,
+  },
+  aiQuizBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  aiQuizBadgeText: {
+    color: '#A78BFA',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  aiOptionsCol: {
+    gap: 10,
+    marginBottom: 28,
+  },
+  aiOptionCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  aiOptionCardSelected: {
+    borderColor: '#845EF7',
+    backgroundColor: '#2B2248',
+  },
+  aiOptionLabel: {
+    color: '#CCCCCC',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  aiOptionLabelSelected: {
+    color: '#FFFFFF',
+  },
+  aiOptionBlurb: {
+    color: '#8B8B8B',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+    fontWeight: '500',
+  },
+  aiGeneratingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    paddingBottom: 80,
+  },
+  aiGeneratingTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 20,
+    textAlign: 'center',
+  },
+  aiGeneratingSub: {
+    color: '#888',
+    fontSize: 14,
+    marginTop: 10,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

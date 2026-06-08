@@ -3,6 +3,23 @@ import { Platform } from 'react-native';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000/api';
 
+/** Avoid minute-long hangs when the API host is wrong or unreachable (common with localhost on device). */
+const API_FETCH_TIMEOUT_MS = 12_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = API_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 // ── Token storage ────────────────────────────────────
 
 const TOKEN_KEY = 'leveld_access_token';
@@ -61,7 +78,7 @@ async function refreshAccessToken(): Promise<string | null> {
   if (!refresh) return null;
 
   try {
-    const res = await fetch(`${API_URL}/auth/refresh/`, {
+    const res = await fetchWithTimeout(`${API_URL}/auth/refresh/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh }),
@@ -110,7 +127,7 @@ async function apiFetch<T = any>(
   }
 
   try {
-    let res = await fetch(url, {
+    let res = await fetchWithTimeout(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -121,7 +138,7 @@ async function apiFetch<T = any>(
       const newToken = await refreshAccessToken();
       if (newToken) {
         headers['Authorization'] = `Bearer ${newToken}`;
-        res = await fetch(url, {
+        res = await fetchWithTimeout(url, {
           method,
           headers,
           body: body ? JSON.stringify(body) : undefined,
@@ -141,7 +158,13 @@ async function apiFetch<T = any>(
 
     return { data: json as T, error: null };
   } catch (err: any) {
-    return { data: null, error: { message: err.message || 'Network error' } };
+    const aborted =
+      err?.name === 'AbortError' ||
+      /aborted|AbortError/i.test(String(err?.message ?? ''));
+    const message = aborted
+      ? 'Request timed out'
+      : err.message || 'Network error';
+    return { data: null, error: { message } };
   }
 }
 
@@ -225,6 +248,10 @@ export async function apiUpdateProfile(
   return apiFetch('/profile/', { method: 'PATCH', body: fields });
 }
 
+export async function apiLogout(): Promise<{ data: any; error: any }> {
+  return apiFetch('/auth/logout/', { method: 'POST', body: {} });
+}
+
 export async function apiDeleteAccount(): Promise<{ data: any; error: any }> {
   return apiFetch('/auth/delete-account/', { method: 'DELETE' });
 }
@@ -246,6 +273,19 @@ export async function apiCreateWorkout(
   return apiFetch('/workouts/', { method: 'POST', body: workout });
 }
 
+export interface ExerciseLifetimeStatRow {
+  exercise_name: string;
+  total_sets: number;
+  total_reps: number;
+}
+
+export async function apiGetExerciseLifetimeStats(): Promise<{
+  data: { exercises: ExerciseLifetimeStatRow[] } | null;
+  error: any;
+}> {
+  return apiFetch<{ exercises: ExerciseLifetimeStatRow[] }>('/workouts/exercise-stats/');
+}
+
 // ══════════════════════════════════════════════════════
 //  BADGES API
 // ══════════════════════════════════════════════════════
@@ -260,9 +300,32 @@ export async function apiGetUserBadges(): Promise<{ data: any[]; error: any }> {
   return { data: result.data || [], error: result.error };
 }
 
+export async function apiBadgeSync(): Promise<{ data: { newly_earned_badges: any[] } | null; error: any }> {
+  return apiFetch('/badges/sync/', { method: 'POST' });
+}
+
 export async function apiGetDailyTips(): Promise<{ data: any[]; error: any }> {
   const result = await apiFetch<any[]>('/daily-tips/');
   return { data: result.data || [], error: result.error };
+}
+
+/** Server-driven local notification “vibe” copy (motivation / workout / social pools). */
+export async function apiGetNotificationPresets(): Promise<{
+  data: {
+    updated_at: string | null;
+    presets: Array<{
+      slug: string;
+      label: string;
+      subtitle: string;
+      sort_order: number;
+      motivation_messages: Array<{ title: string; body: string }>;
+      workout_messages: Array<{ title: string; body: string }>;
+      social_messages: Array<{ title: string; body: string }>;
+    }>;
+  } | null;
+  error: any;
+}> {
+  return apiFetch('/notification-presets/');
 }
 
 // ══════════════════════════════════════════════════════
@@ -378,7 +441,7 @@ export async function apiGetGroupDetail(
 }
 
 export async function apiCreateGroup(
-  group: { name: string; description?: string; is_public?: boolean },
+  group: { name: string; description?: string },
 ): Promise<{ data: any; error: any }> {
   return apiFetch('/groups/', { method: 'POST', body: group });
 }
@@ -393,6 +456,60 @@ export async function apiLeaveGroup(
   groupId: string,
 ): Promise<{ data: any; error: any }> {
   return apiFetch(`/groups/${groupId}/leave/`, { method: 'DELETE' });
+}
+
+export async function apiUpdateGroup(
+  groupId: string,
+  fields: { name?: string; description?: string },
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/groups/${groupId}/`, { method: 'PATCH', body: fields });
+}
+
+export async function apiDeleteGroup(
+  groupId: string,
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/groups/${groupId}/`, { method: 'DELETE' });
+}
+
+export async function apiRemoveGroupMember(
+  groupId: string,
+  userId: number | string,
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/groups/${groupId}/members/${userId}/`, { method: 'DELETE' });
+}
+
+/** In-app group invites (invitee sees pending list; no share sheet). */
+export async function apiGetPendingGroupInvites(): Promise<{
+  data: any[] | null;
+  error: any;
+}> {
+  const result = await apiFetch<any[]>('/group-invites/');
+  return {
+    data: Array.isArray(result.data) ? result.data : [],
+    error: result.error,
+  };
+}
+
+export async function apiCreateGroupInvite(
+  groupId: string,
+  userId: number,
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/groups/${groupId}/invites/`, {
+    method: 'POST',
+    body: { user_id: userId },
+  });
+}
+
+export async function apiAcceptGroupInvite(
+  inviteId: string,
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/group-invites/${inviteId}/accept/`, { method: 'POST' });
+}
+
+export async function apiDeclineGroupInvite(
+  inviteId: string,
+): Promise<{ data: any; error: any }> {
+  return apiFetch(`/group-invites/${inviteId}/decline/`, { method: 'POST' });
 }
 
 // ══════════════════════════════════════════════════════
@@ -548,16 +665,32 @@ export async function apiCreateFeedPost(
   content: string,
   templateId?: string,
   workoutId?: string,
+  groupId?: string,
 ): Promise<{ data: any; error: any }> {
   const body: Record<string, any> = { content };
   if (templateId) body.template_id = templateId;
   if (workoutId) body.workout_id = workoutId;
+  if (groupId) body.group_id = groupId;
   return apiFetch('/feed/', { method: 'POST', body });
 }
 
 // ══════════════════════════════════════════════════════
 //  CHALLENGES API
 // ══════════════════════════════════════════════════════
+
+export async function apiGetMyChallengeParticipations(): Promise<{
+  data: {
+    in_any_group: boolean;
+    participations: any[];
+  } | null;
+  error: any;
+}> {
+  const result = await apiFetch<{
+    in_any_group: boolean;
+    participations: any[];
+  }>('/challenges/participations/');
+  return { data: result.data ?? null, error: result.error };
+}
 
 export async function apiGetGroupChallenges(
   groupId: string,

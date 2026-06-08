@@ -8,7 +8,8 @@ from .models import Workout, FeedReaction, WorkoutFeed
 def on_workout_created(sender, instance, created, **kwargs):
     if created:
         from .services import process_workout_created
-        process_workout_created(instance)
+        newly = process_workout_created(instance)
+        instance._newly_completed_challenges = newly or []
 
 
 @receiver(post_save, sender=FeedReaction)

@@ -7,7 +7,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useSegments } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppLogo } from '@/components/AppLogo';
 import { Button } from '@/components/Button';
@@ -17,20 +17,22 @@ import {
   isPostOnboardingPaywallPending,
 } from '@/lib/postRegisterFlow';
 import { Dumbbell, TrendingUp, Users } from 'lucide-react-native';
+import { getWelcomeLogoLayout } from '@/lib/welcomeLogoLayout';
 
 const { width } = Dimensions.get('window');
-
-/** Layout box matches the old logo slot; scale blows it up visually without pushing the rest of the screen. */
-const LOGO_LAYOUT_SIZE = Math.min(width * 0.38, 152);
-const LOGO_VISUAL_SCALE = Math.min(width * 0.62, 280) / LOGO_LAYOUT_SIZE;
+const { layoutSize: LOGO_LAYOUT_SIZE, visualScale: LOGO_VISUAL_SCALE } =
+  getWelcomeLogoLayout(width);
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const segments = useSegments();
   const { user, loading, profile } = useAuth();
 
-  const fadeIn = useRef(new Animated.Value(0)).current;
-  const fadeInDown = useRef(new Animated.Value(0)).current;
-  const slideDown = useRef(new Animated.Value(-20)).current;
+  // First launch: loading=true → start at 0 so intro runs under the Loading… screen.
+  // Remount after sign-out: loading=false → start visible (no flash before animations run).
+  const fadeIn = useRef(new Animated.Value(loading ? 0 : 1)).current;
+  const fadeInDown = useRef(new Animated.Value(loading ? 0 : 1)).current;
+  const slideDown = useRef(new Animated.Value(loading ? -20 : 0)).current;
 
   const iconScale1 = useRef(new Animated.Value(1)).current;
   const iconScale2 = useRef(new Animated.Value(1)).current;
@@ -38,6 +40,15 @@ export default function WelcomeScreen() {
 
   useEffect(() => {
     if (loading || !user || !profile) return;
+    // If this screen stays mounted under the stack while the user is already in the app,
+    // this effect can re-run and accidentally reset navigation to tab home.
+    // Only redirect when the currently active route is actually welcome (`/` or `/index`).
+    const seg = segments as string[];
+    const onWelcomeRoute =
+      seg.length === 0 ||
+      (seg.length === 1 && (seg[0] === '' || seg[0] === 'index'));
+    if (!onWelcomeRoute) return;
+
     let cancelled = false;
     (async () => {
       if (profileNeedsOnboarding(profile)) {
@@ -45,7 +56,12 @@ export default function WelcomeScreen() {
         return;
       }
       if (await isPostOnboardingPaywallPending()) {
-        if (!cancelled) router.replace('/paywall');
+        if (!cancelled) {
+          router.replace({
+            pathname: '/paywall',
+            params: { source: 'onboarding' },
+          });
+        }
         return;
       }
       if (!cancelled) router.replace('/(tabs)');
@@ -53,7 +69,7 @@ export default function WelcomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [user, loading, profile]);
+  }, [user, loading, profile, segments, router]);
 
   useEffect(() => {
     // Fade in animations

@@ -1,11 +1,12 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs, usePathname, useRouter, useSegments } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Home, BarChart3, Plus, Users, User, Timer, Zap } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSession } from '@/contexts/SessionContext';
+import { GroupInvitesProvider, useGroupInvites } from '@/contexts/GroupInvitesContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
 function formatTime(secs: number) {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
@@ -15,8 +16,14 @@ function formatTime(secs: number) {
 function SessionBanner() {
   const { isActive, templateName, templateColor, elapsed } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
+  const segments = useSegments();
 
-  if (!isActive) return null;
+  const onTrackTab =
+    pathname === '/track' ||
+    pathname?.startsWith('/track/') ||
+    segments.includes('track');
+  if (!isActive || onTrackTab) return null;
 
   return (
     <TouchableOpacity
@@ -38,21 +45,7 @@ function SessionBanner() {
 
 export default function TabLayout() {
   const { user, loading } = useAuth();
-  const router = useRouter();
   const insets = useSafeAreaInsets();
-  /** `Redirect` uses focus effects and can thrash `replace` → max update depth; navigate once per sign-out. */
-  const sentHomeRef = useRef(false);
-
-  useEffect(() => {
-    if (loading) return;
-    if (user) {
-      sentHomeRef.current = false;
-      return;
-    }
-    if (sentHomeRef.current) return;
-    sentHomeRef.current = true;
-    router.replace('/');
-  }, [user, loading, router]);
 
   if (loading) {
     return (
@@ -85,9 +78,26 @@ export default function TabLayout() {
   }
 
   return (
+    <GroupInvitesProvider>
+      <TabLayoutWithInvites insets={insets} />
+    </GroupInvitesProvider>
+  );
+}
+
+function TabLayoutWithInvites({ insets }: { insets: { bottom: number } }) {
+  const { pendingCount, refreshInvites } = useGroupInvites();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshInvites();
+    }, [refreshInvites]),
+  );
+
+  return (
     <View style={{ flex: 1, backgroundColor: '#1E1E1E' }}>
       <SessionBanner />
-      <Tabs
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <Tabs
         screenOptions={{
           headerShown: false,
           tabBarStyle: {
@@ -129,7 +139,26 @@ export default function TabLayout() {
           name="groups"
           options={{
             title: 'Groups',
-            tabBarIcon: ({ size, color }) => <Users size={size} color={color} />,
+            tabBarIcon: ({ size, color }) => (
+              <View style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
+                <Users size={size} color={color} />
+                {pendingCount > 0 ? (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: -1,
+                      right: -2,
+                      width: 9,
+                      height: 9,
+                      borderRadius: 5,
+                      backgroundColor: '#FF3B30',
+                      borderWidth: 1.5,
+                      borderColor: '#1E1E1E',
+                    }}
+                  />
+                ) : null}
+              </View>
+            ),
           }}
         />
         <Tabs.Screen
@@ -160,7 +189,15 @@ export default function TabLayout() {
             headerShown: false,
           }}
         />
+        <Tabs.Screen
+          name="calendar-workout"
+          options={{
+            href: null,
+            headerShown: false,
+          }}
+        />
       </Tabs>
+      </View>
     </View>
   );
 }

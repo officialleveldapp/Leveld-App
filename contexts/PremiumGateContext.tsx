@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext } from 'react';
 import { Platform } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePaywall } from '@/contexts/PaywallContext';
 import { shouldUseSuperwallNative } from '@/lib/superwallAvailability';
 
 type RegisterGatedFn = (placement: string, feature: () => void) => Promise<void>;
@@ -10,7 +10,7 @@ export const PremiumGateContext = createContext<RegisterGatedFn | null>(null);
 
 function PremiumGateFallbackInner({ children }: { children: React.ReactNode }) {
   const { profile } = useAuth();
-  const router = useRouter();
+  const showPaywall = usePaywall();
 
   const registerGated = useCallback(
     async (_placement: string, feature: () => void) => {
@@ -18,9 +18,9 @@ function PremiumGateFallbackInner({ children }: { children: React.ReactNode }) {
         feature();
         return;
       }
-      router.push('/paywall');
+      showPaywall(feature);
     },
-    [profile?.is_pro, router],
+    [profile?.is_pro, showPaywall],
   );
 
   return (

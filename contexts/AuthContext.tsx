@@ -1,15 +1,26 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from 'react';
+import { InteractionManager, Platform } from 'react-native';
 import { Profile } from '@/types/database';
 import {
   apiLogin,
   apiRegister,
   apiGoogleSignIn,
   apiGetProfile,
+  apiLogout,
+  apiDeleteAccount,
   clearTokens,
   hasSession,
 } from '@/lib/api';
 import { clearPersistedWorkoutSession } from '@/lib/workoutSessionStorage';
 import { clearPostOnboardingPaywallPending } from '@/lib/postRegisterFlow';
+import { resetAfterSignOut, resetToWelcome } from '@/lib/resetToWelcome';
+import { clearAllGroupInviteState } from '@/lib/groupInviteStorage';
 
 interface AuthContextType {
   user: { id: number; email: string } | null;
@@ -19,10 +30,20 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<any>;
   signInWithGoogle: (idToken: string) => Promise<any>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+async function clearLocalSession(): Promise<void> {
+  await Promise.allSettled([
+    clearTokens(),
+    clearPersistedWorkoutSession(),
+    clearPostOnboardingPaywallPending(),
+    clearAllGroupInviteState(),
+  ]);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<{ id: number; email: string } | null>(null);
@@ -40,8 +61,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : error?.message || error?.detail || '';
     return (
       typeof message === 'string' &&
-      /network request failed|network error|failed to fetch/i.test(message)
+      /network request failed|network error|failed to fetch|timed out|timeout|aborted/i.test(
+        message,
+      )
     );
+  };
+
+  /** RN/WKWebView sometimes surfaces this for JSON fetches — not an auth failure; avoid signing out. */
+  const isTransientBlobFetchError = (error: any): boolean => {
+    const message =
+      typeof error === 'string'
+        ? error
+        : typeof error?.message === 'string'
+          ? error.message
+          : '';
+    return /unable to resolve data for blob/i.test(message);
   };
 
   const initSession = async () => {
@@ -57,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       if (!(await hasSession())) {
         setUser(null);
@@ -65,7 +99,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const { data, error } = await apiGetProfile();
-      if (error) throw error;
+      if (error) {
+        if (isTransientBlobFetchError(error)) {
+          console.warn(
+            'Profile fetch skipped (transient blob / fetch infrastructure):',
+            error?.message ?? error,
+          );
+          return;
+        }
+        throw error;
+      }
       if (data) {
         const p = data as Profile;
         setProfile({
@@ -75,29 +118,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser({ id: Number(p.id), email: p.email ?? '' });
       }
     } catch (error: any) {
-      // A backend outage / simulator offline should not show a red runtime error
-      // or wipe a valid local auth session.
-      if (isNetworkError(error)) {
-        console.warn('Profile unavailable (network):', error?.message || error);
+      if (isNetworkError(error) || isTransientBlobFetchError(error)) {
+        console.warn('Profile unavailable (transient):', error?.message || error);
         return;
       }
 
       console.warn('Error loading profile:', error);
-      // Token may be expired and refresh failed.
-      await clearTokens();
+      setUser(null);
+      setProfile(null);
       try {
-        await clearPersistedWorkoutSession();
+        await clearLocalSession();
       } catch {
         /* ignore */
       }
-      setUser(null);
-      setProfile(null);
+      if (Platform.OS !== 'web') {
+        resetToWelcome();
+      }
     }
-  };
+  }, []);
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     await loadProfile();
-  };
+  }, [loadProfile]);
 
   const signUp = async (email: string, password: string, username: string) => {
     const { data, error } = await apiRegister(email, password, username);
@@ -153,14 +195,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      await clearTokens();
-      await clearPersistedWorkoutSession();
-      await clearPostOnboardingPaywallPending();
-    } catch (e) {
-      console.warn('signOut cleanup:', e);
+      await apiLogout();
+    } catch {
+      /* still sign out locally */
     }
+
+    try {
+      await clearLocalSession();
+    } catch {
+      /* ignore */
+    }
+
     setUser(null);
     setProfile(null);
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') window.location.assign('/');
+      return;
+    }
+
+    InteractionManager.runAfterInteractions(() => {
+      resetAfterSignOut();
+    });
+    setTimeout(() => resetAfterSignOut(), 500);
+  };
+
+  const deleteAccount = async () => {
+    const { error } = await apiDeleteAccount();
+    if (error) {
+      const detail = (error as { detail?: string | string[] })?.detail;
+      const msg = Array.isArray(detail)
+        ? detail[0]
+        : typeof detail === 'string'
+          ? detail
+          : 'Failed to delete account';
+      throw new Error(msg);
+    }
+
+    try {
+      await clearLocalSession();
+    } catch {
+      /* ignore */
+    }
+
+    setUser(null);
+    setProfile(null);
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') window.location.assign('/');
+      return;
+    }
+
+    InteractionManager.runAfterInteractions(() => {
+      resetAfterSignOut();
+    });
+    setTimeout(() => resetAfterSignOut(), 500);
   };
 
   return (
@@ -173,6 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signInWithGoogle,
         signOut,
+        deleteAccount,
         refreshProfile,
       }}
     >

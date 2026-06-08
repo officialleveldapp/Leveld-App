@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { Linking, Platform } from 'react-native';
@@ -91,6 +92,12 @@ export function RevenueCatProvider({
   const { profile, refreshProfile } = useAuth();
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
+  const lastRcUserIdRef = useRef<string | null>(null);
+  const refreshProfileRef = useRef(refreshProfile);
+  refreshProfileRef.current = refreshProfile;
+  const backendUserIdRef = useRef<string | null>(null);
+  backendUserIdRef.current =
+    profile?.id != null ? String(profile.id) : null;
 
   const apiKey = useMemo(() => {
     if (Platform.OS === 'ios') return getAppleApiKey();
@@ -112,21 +119,28 @@ export function RevenueCatProvider({
     let cancelled = false;
     const listener: CustomerInfoUpdateListener = (info) => {
       setCustomerInfo(info);
-      if (customerInfoHasLeveldPro(info)) {
-        void refreshProfile();
+      if (
+        backendUserIdRef.current &&
+        customerInfoHasLeveldPro(info)
+      ) {
+        void refreshProfileRef.current();
       }
     };
 
     (async () => {
       try {
         if (__DEV__) {
-          Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
+          const rcVerbose =
+            process.env.EXPO_PUBLIC_REVENUECAT_DEBUG_LOGS?.trim() === '1';
+          Purchases.setLogLevel(rcVerbose ? LOG_LEVEL.VERBOSE : LOG_LEVEL.WARN);
         }
         const alreadyConfigured = await Purchases.isConfigured();
         if (!alreadyConfigured) {
           Purchases.configure({ apiKey });
         }
         Purchases.addCustomerInfoUpdateListener(listener);
+        // Unblock the app before StoreKit / getCustomerInfo (can be slow on Simulator with no sandbox account).
+        if (!cancelled) setSdkReady(true);
         const info = await Purchases.getCustomerInfo();
         if (!cancelled) setCustomerInfo(info);
       } catch (e) {
@@ -140,22 +154,38 @@ export function RevenueCatProvider({
       cancelled = true;
       Purchases.removeCustomerInfoUpdateListener(listener);
     };
-  }, [enabled, apiKey, refreshProfile]);
+  }, [enabled, apiKey]);
 
   // Identify user — must match backend RevenueCat webhook `app_user_id` (profile PK).
+  // Do not assign `lastRcUserIdRef` before async logIn/logOut finishes: a fast re-run would see
+  // prevId=null and skip logOut(), leaving RevenueCat / StoreKit out of sync and spamming listeners.
   useEffect(() => {
     if (!enabled || !sdkReady) return;
 
+    let cancelled = false;
+
     const run = async () => {
       try {
-        if (profile?.id != null) {
-          const { customerInfo: next } = await Purchases.logIn(
-            String(profile.id),
-          );
-          setCustomerInfo(next);
-        } else {
+        const nextId = profile?.id != null ? String(profile.id) : null;
+        const prevId = lastRcUserIdRef.current;
+
+        if (nextId != null) {
+          if (nextId !== prevId) {
+            const { customerInfo: next } = await Purchases.logIn(nextId);
+            if (!cancelled) {
+              lastRcUserIdRef.current = nextId;
+              setCustomerInfo(next);
+            }
+          }
+          return;
+        }
+
+        if (prevId != null) {
           const next = await Purchases.logOut();
-          setCustomerInfo(next);
+          if (!cancelled) {
+            lastRcUserIdRef.current = null;
+            setCustomerInfo(next);
+          }
         }
       } catch (e) {
         console.warn('[RevenueCat] logIn/logOut:', e);
@@ -163,6 +193,9 @@ export function RevenueCatProvider({
     };
 
     void run();
+    return () => {
+      cancelled = true;
+    };
   }, [enabled, sdkReady, profile?.id]);
 
   const hasLeveldProEntitlement = customerInfoHasLeveldPro(customerInfo);

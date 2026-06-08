@@ -1,6 +1,8 @@
 /** Superwall placement ids — create matching placements in the Superwall dashboard. */
 export const PLACEMENT_CAMPAIGN_TRIGGER = 'campaign_trigger';
 export const PLACEMENT_CUSTOM_TEMPLATE = 'leveld_custom_template';
+/** Personalized workout questionnaire (rule-based generator) — gate in Superwall dashboard. */
+export const PLACEMENT_AI_PERSONALIZED_WORKOUT = 'leveld_ai_personalized_workout';
 
 /**
  * Placement registered automatically after onboarding (see `PostOnboardingSuperwallPaywall`).

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
 import { apiGetWorkouts } from '@/lib/api';
@@ -33,8 +34,6 @@ export default function CalendarScreen() {
   const { profile } = useAuth();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
 
   useEffect(() => {
     loadWorkouts();
@@ -97,9 +96,12 @@ export default function CalendarScreen() {
     )
       .toISOString()
       .split('T')[0];
-    setSelectedDate(dateStr);
     const workout = workouts.find((w) => w.workout_date === dateStr);
-    setSelectedWorkout(workout || null);
+    if (!workout) return;
+    router.push({
+      pathname: '/(tabs)/calendar-workout',
+      params: { workoutId: workout.id, workoutDate: dateStr },
+    });
   };
 
   const previousMonth = () => {
@@ -171,7 +173,6 @@ export default function CalendarScreen() {
                 .toISOString()
                 .split('T')[0];
               const hasWorkoutDay = hasWorkout(day);
-              const isSelected = selectedDate === dateStr;
               const isToday = dateStr === today;
 
               return (
@@ -180,7 +181,6 @@ export default function CalendarScreen() {
                   style={[
                     styles.dayCell,
                     hasWorkoutDay && styles.dayCellWithWorkout,
-                    isSelected && styles.dayCellSelected,
                   ]}
                   onPress={() => handleDayPress(day)}
                 >
@@ -188,7 +188,6 @@ export default function CalendarScreen() {
                     style={[
                       styles.dayText,
                       hasWorkoutDay && styles.dayTextWithWorkout,
-                      isSelected && styles.dayTextSelected,
                       isToday && styles.dayTextToday,
                     ]}
                   >
@@ -204,52 +203,6 @@ export default function CalendarScreen() {
             })}
           </View>
         </Card>
-
-        {selectedWorkout && (
-          <Card style={styles.detailsCard}>
-            <Text style={styles.detailsTitle}>Workout Details</Text>
-            <View style={styles.detailsRow}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Sets</Text>
-                <Text style={styles.detailValue}>
-                  {selectedWorkout.total_sets}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Reps</Text>
-                <Text style={styles.detailValue}>
-                  {selectedWorkout.total_reps}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>XP</Text>
-                <Text style={styles.detailValue}>
-                  +{selectedWorkout.xp_earned}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.detailsRow}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Calories</Text>
-                <Text style={styles.detailValue}>
-                  {selectedWorkout.calories_burned}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Duration</Text>
-                <Text style={styles.detailValue}>
-                  {selectedWorkout.duration_minutes}m
-                </Text>
-              </View>
-            </View>
-            {selectedWorkout.notes && (
-              <View style={styles.notesSection}>
-                <Text style={styles.detailLabel}>Notes</Text>
-                <Text style={styles.notesText}>{selectedWorkout.notes}</Text>
-              </View>
-            )}
-          </Card>
-        )}
 
         <Card style={styles.statsCard}>
           <Text style={styles.statsTitle}>This Month</Text>
@@ -353,10 +306,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E2A3A',
     borderRadius: 8,
   },
-  dayCellSelected: {
-    backgroundColor: '#4C91FF',
-    borderRadius: 8,
-  },
   dayText: {
     color: '#999999',
     fontSize: 14,
@@ -364,10 +313,6 @@ const styles = StyleSheet.create({
   },
   dayTextWithWorkout: {
     color: '#FFFFFF',
-  },
-  dayTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   dayTextToday: {
     color: '#FFB547',
@@ -377,46 +322,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 2,
     right: 2,
-  },
-  detailsCard: {
-    marginBottom: 16,
-  },
-  detailsTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  detailsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  detailItem: {
-    flex: 1,
-    backgroundColor: '#1E1E1E',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-  },
-  detailLabel: {
-    color: '#999999',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  detailValue: {
-    color: '#4C91FF',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  notesSection: {
-    marginTop: 8,
-  },
-  notesText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    marginTop: 4,
   },
   statsCard: {
     marginBottom: 16,

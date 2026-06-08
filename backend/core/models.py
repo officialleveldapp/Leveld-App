@@ -21,6 +21,12 @@ class Profile(models.Model):
     goal = models.CharField(max_length=100, default='General Fitness')
     experience_level = models.CharField(max_length=50, default='Beginner')
     workout_frequency = models.IntegerField(default=3)
+    onboarding_completed = models.BooleanField(default=False)
+    body_weight_lbs = models.PositiveIntegerField(null=True, blank=True)
+    height_inches = models.PositiveIntegerField(null=True, blank=True)
+    starting_bench_lbs = models.PositiveIntegerField(null=True, blank=True)
+    training_environment = models.CharField(max_length=32, blank=True, default='')
+    session_length_minutes = models.PositiveSmallIntegerField(null=True, blank=True)
     preferred_exercises = models.JSONField(default=list, blank=True)
     last_workout_date = models.DateField(blank=True, null=True)
     google_sub = models.CharField(max_length=255, unique=True, null=True, blank=True)
@@ -31,6 +37,31 @@ class Profile(models.Model):
 
     def __str__(self):
         return self.username
+
+
+class NotificationPersonalityPreset(models.Model):
+    """
+    Server-driven copy for local notification “vibes” (motivational, troll, etc.).
+    Edit in Django admin; apps fetch via GET /notification-presets/.
+    """
+
+    slug = models.SlugField(max_length=64, unique=True, db_index=True)
+    label = models.CharField(max_length=120)
+    subtitle = models.CharField(max_length=280, blank=True, default='')
+    enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    motivation_messages = models.JSONField(default=list, blank=True)
+    workout_messages = models.JSONField(default=list, blank=True)
+    social_messages = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'slug']
+        verbose_name = 'notification personality preset'
+        verbose_name_plural = 'notification personality presets'
+
+    def __str__(self):
+        return f'{self.label} ({self.slug})'
 
 
 class Workout(models.Model):
@@ -177,7 +208,7 @@ class Group(models.Model):
         on_delete=models.CASCADE,
         related_name='created_groups',
     )
-    is_public = models.BooleanField(default=True)
+    is_public = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -203,6 +234,44 @@ class GroupMember(models.Model):
 
     def __str__(self):
         return f"{self.user.username} in {self.group.name}"
+
+
+class GroupInvite(models.Model):
+    """In-app invite: inviter (member) asks invitee (friend) to join; invitee accepts or declines in-app."""
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('declined', 'Declined'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name='invites',
+    )
+    invitee = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name='group_invites_received',
+    )
+    inviter = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name='group_invites_sent',
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('group', 'invitee')
+        indexes = [
+            models.Index(fields=['invitee', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.inviter.username} → {self.invitee.username} ({self.group.name})"
 
 
 class Challenge(models.Model):
@@ -383,6 +452,13 @@ class WorkoutFeed(models.Model):
         blank=True,
         related_name='feed_items',
     )
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='feed_items',
+    )
     content = models.TextField()
     likes_count = models.IntegerField(default=0)  # total reactions count
     created_at = models.DateTimeField(auto_now_add=True)
@@ -391,6 +467,7 @@ class WorkoutFeed(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['-created_at']),
+            models.Index(fields=['group', '-created_at']),
         ]
 
     def __str__(self):
