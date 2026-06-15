@@ -5,5 +5,5 @@
 cmds = ['pip install -r requirements.txt', 'python manage.py collectstatic --noinput']
 
 [start]
-# Run DB migrations on every deploy before booting the web server.
-cmd = 'python manage.py migrate --noinput && gunicorn leveld.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4'
+# Run migrations + collect static (admin + /panel assets) on every boot, then serve.
+cmd = 'python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn leveld.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4'
