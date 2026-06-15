@@ -98,12 +98,12 @@ export default function ExerciseStatsScreen() {
             rows.length === 0 && styles.listEmpty,
           ]}
           ListHeaderComponent={
-            <View style={styles.introBlock}>
-              <Text style={styles.intro}>
-                Total reps = sets × reps per set from every workout you&apos;ve logged. Same names
-                are grouped together.
-              </Text>
-              {rows.length > 0 ? (
+            rows.length > 0 ? (
+              <View style={styles.introBlock}>
+                <Text style={styles.intro}>
+                  Total reps = sets × reps per set from every workout you&apos;ve logged. Same names
+                  are grouped together.
+                </Text>
                 <View style={styles.summaryPills}>
                   <View style={styles.pill}>
                     <Text style={styles.pillLabel}>Exercises</Text>
@@ -118,13 +118,26 @@ export default function ExerciseStatsScreen() {
                     <Text style={styles.pillValue}>{totalReps.toLocaleString()}</Text>
                   </View>
                 </View>
-              ) : null}
-            </View>
+              </View>
+            ) : null
           }
           ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              No exercise history yet. Complete a session on Track to build your lifetime totals.
-            </Text>
+            <View style={styles.emptyWrap}>
+              <View style={styles.emptyIcon}>
+                <Dumbbell color="#4C91FF" size={34} />
+              </View>
+              <Text style={styles.emptyTitle}>No exercise history yet</Text>
+              <Text style={styles.emptyText}>
+                Complete a session on Track to start building your lifetime totals.
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyCta}
+                onPress={() => router.push('/(tabs)/track')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.emptyCtaText}>Start a workout</Text>
+              </TouchableOpacity>
+            </View>
           }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4C91FF" />
@@ -251,11 +264,44 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 2,
   },
+  emptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  emptyIcon: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: 'rgba(76, 145, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
   emptyText: {
     color: '#94A3B8',
     fontSize: 15,
     lineHeight: 22,
     textAlign: 'center',
     paddingHorizontal: 12,
+  },
+  emptyCta: {
+    marginTop: 24,
+    backgroundColor: '#4C91FF',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+  },
+  emptyCtaText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

@@ -166,39 +166,6 @@ class Follow(models.Model):
         return f"{self.follower.username} -> {self.following.username}"
 
 
-class Friendship(models.Model):
-    STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('accepted', 'Accepted'),
-        ('rejected', 'Rejected'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(
-        Profile,
-        on_delete=models.CASCADE,
-        related_name='friendships_sent',
-    )
-    friend = models.ForeignKey(
-        Profile,
-        on_delete=models.CASCADE,
-        related_name='friendships_received',
-    )
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('user', 'friend')
-
-    def clean(self):
-        from django.core.exceptions import ValidationError
-        if self.user == self.friend:
-            raise ValidationError("Cannot befriend yourself.")
-
-    def __str__(self):
-        return f"{self.user.username} -> {self.friend.username} ({self.status})"
-
-
 class Group(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)

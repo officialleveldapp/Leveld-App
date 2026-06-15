@@ -11,6 +11,11 @@ import type {
 
 import LOGO_ASSET from '../assets/images/logo.png';
 import { apiGetNotificationPresets } from '@/lib/api';
+import {
+  getNotificationPrefs,
+  NOTIFICATION_TYPE_KEYS,
+  type NotifTypeKey,
+} from '@/lib/notificationPreferences';
 
 // ---------------------------------------------------------------------------
 // Notification handler — show banner + list when app is foregrounded
@@ -522,15 +527,19 @@ const ID_MOTIVATION = 'leveld-daily-motivation';
 const ID_WORKOUT = 'leveld-daily-workout';
 const ID_SOCIAL = 'leveld-daily-social';
 
+/** Maps each notification type to its identifier and the vibe copy pool it draws from. */
+const TYPE_TO_ID: Record<NotifTypeKey, string> = {
+  motivation: ID_MOTIVATION,
+  workout: ID_WORKOUT,
+  social: ID_SOCIAL,
+};
+
 /**
- * Schedule (or reschedule) the three daily local notifications:
- * - 8:00 AM  → Motivation
- * - 4:00 PM  → Workout reminder
- * - 8:00 PM  → Social / community nudge
+ * Schedule (or reschedule) the daily local notifications the user has enabled.
  *
- * Each fires once per day and repeats. Content is randomised at schedule time
- * and refreshed every time the app re-schedules (typically on each launch).
- * Copy follows the user’s chosen preset vibe (no custom user text).
+ * Each enabled type fires once per day at its user-chosen time and repeats.
+ * Disabled types are left cancelled. Content is randomised at schedule time and
+ * follows the user’s chosen preset vibe (no custom user text).
  */
 export async function scheduleDailyNotifications(): Promise<void> {
   if (Platform.OS === 'web') return;
@@ -543,58 +552,32 @@ export async function scheduleDailyNotifications(): Promise<void> {
 
   await cancelDailyNotifications();
 
+  const prefs = await getNotificationPrefs();
   const personality = await getNotificationPersonality();
   const pool = getPoolsFor(personality);
-  const motivation = pickRandom(pool.motivation);
-  const workout = pickRandom(pool.workout);
-  const social = pickRandom(pool.social);
   const androidExtras = androidNotificationExtras();
 
   try {
-    await scheduleLocalNotification({
-      identifier: ID_MOTIVATION,
-      content: {
-        title: motivation.title,
-        body: motivation.body,
-        sound: 'default',
-        ...androidExtras,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: 8,
-        minute: 0,
-      },
-    });
+    for (const type of NOTIFICATION_TYPE_KEYS) {
+      const pref = prefs[type];
+      if (!pref.enabled) continue;
 
-    await scheduleLocalNotification({
-      identifier: ID_WORKOUT,
-      content: {
-        title: workout.title,
-        body: workout.body,
-        sound: 'default',
-        ...androidExtras,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: 16,
-        minute: 0,
-      },
-    });
-
-    await scheduleLocalNotification({
-      identifier: ID_SOCIAL,
-      content: {
-        title: social.title,
-        body: social.body,
-        sound: 'default',
-        ...androidExtras,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: 20,
-        minute: 0,
-      },
-    });
+      const line = pickRandom(pool[type]);
+      await scheduleLocalNotification({
+        identifier: TYPE_TO_ID[type],
+        content: {
+          title: line.title,
+          body: line.body,
+          sound: 'default',
+          ...androidExtras,
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour: pref.hour,
+          minute: pref.minute,
+        },
+      });
+    }
   } catch (e) {
     console.warn('[notifications] scheduleDailyNotifications failed', e);
   }
@@ -608,47 +591,4 @@ export async function cancelDailyNotifications(): Promise<void> {
     Notifications.cancelScheduledNotificationAsync(ID_WORKOUT),
     Notifications.cancelScheduledNotificationAsync(ID_SOCIAL),
   ]);
-}
-
-type PreviewSlot = keyof VibePools;
-
-/**
- * Schedule a one-off local notification after `seconds` (default 2).
- * Uses the stored preset vibe; rotates morning / workout / social copy for variety.
- */
-export async function scheduleTestNotificationInSeconds(
-  seconds: number = 2,
-): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
-
-  const granted = await requestNotificationPermission();
-  if (!granted) return false;
-
-  await initNotificationPresetsCache();
-  await refreshNotificationPresetsFromApi();
-
-  const personality = await getNotificationPersonality();
-  const pool = getPoolsFor(personality);
-  const slot = pickRandom<PreviewSlot>(['motivation', 'workout', 'social']);
-  const sample = pickRandom(pool[slot]);
-  const androidExtras = androidNotificationExtras();
-
-  try {
-    await scheduleLocalNotification({
-      content: {
-        title: sample.title,
-        body: sample.body,
-        sound: 'default',
-        ...androidExtras,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: Math.max(1, Math.floor(seconds)),
-      },
-    });
-  } catch (e) {
-    console.warn('[notifications] scheduleTestNotificationInSeconds failed', e);
-    return false;
-  }
-  return true;
 }

@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
-    Profile, Workout, Badge, UserBadge, Friendship, Follow,
+    Profile, Workout, Badge, UserBadge, Follow,
     Group, GroupMember, GroupInvite, Challenge, ChallengeParticipant,
     WorkoutFeed, FeedReaction, DailyTip,
     WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
@@ -27,8 +27,6 @@ from .serializers import (
     NotificationPersonalityPresetSerializer,
     WorkoutSerializer, WorkoutCreateSerializer,
     BadgeSerializer, UserBadgeSerializer, DailyTipSerializer,
-    FollowSerializer,
-    FriendshipSerializer, FriendshipCreateSerializer,
     GroupSerializer, GroupMemberSerializer, GroupInviteSerializer,
     ChallengeSerializer, ChallengeCreateSerializer,
     ChallengeParticipantSerializer,
@@ -516,86 +514,6 @@ class LeaderboardView(APIView):
         limit = int(request.query_params.get('limit', 10))
         profiles = Profile.objects.order_by('-xp')[:limit]
         return Response(ProfilePublicSerializer(profiles, many=True).data)
-
-
-# ══════════════════════════════════════════════════════
-#  FRIENDSHIPS
-# ══════════════════════════════════════════════════════
-
-class FriendshipListCreateView(APIView):
-    """
-    GET returns three lists: friends (accepted), sent (pending), received (pending).
-    POST creates a new friend request.
-    """
-    def get(self, request):
-        profile = request.user.profile
-
-        sent = Friendship.objects.filter(user=profile).select_related('friend', 'user')
-        received = Friendship.objects.filter(friend=profile).select_related('friend', 'user')
-
-        return Response({
-            'friends': FriendshipSerializer(
-                sent.filter(status='accepted') | received.filter(status='accepted'),
-                many=True,
-            ).data,
-            'sent': FriendshipSerializer(sent.filter(status='pending'), many=True).data,
-            'received': FriendshipSerializer(received.filter(status='pending'), many=True).data,
-        })
-
-    def post(self, request):
-        profile = request.user.profile
-        serializer = FriendshipCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        friend_id = serializer.validated_data['friend_id']
-
-        try:
-            friend_profile = Profile.objects.get(user_id=friend_id)
-        except Profile.DoesNotExist:
-            return Response({'detail': 'User not found.'}, status=404)
-
-        if profile == friend_profile:
-            return Response({'detail': 'Cannot befriend yourself.'}, status=400)
-
-        friendship, created = Friendship.objects.get_or_create(
-            user=profile, friend=friend_profile,
-            defaults={'status': 'pending'},
-        )
-        if not created:
-            return Response({'detail': 'Friendship already exists.'}, status=400)
-
-        return Response(FriendshipSerializer(friendship).data, status=201)
-
-
-class FriendshipDetailView(APIView):
-    def patch(self, request, pk):
-        profile = request.user.profile
-        try:
-            friendship = Friendship.objects.get(
-                pk=pk,
-            )
-        except Friendship.DoesNotExist:
-            return Response({'detail': 'Not found.'}, status=404)
-
-        # Only the recipient can accept/reject
-        if friendship.friend != profile and friendship.user != profile:
-            return Response({'detail': 'Not authorized.'}, status=403)
-
-        new_status = request.data.get('status')
-        if new_status not in ('accepted', 'rejected'):
-            return Response({'detail': 'Invalid status.'}, status=400)
-
-        friendship.status = new_status
-        friendship.save()
-        return Response(FriendshipSerializer(friendship).data)
-
-    def delete(self, request, pk):
-        profile = request.user.profile
-        try:
-            friendship = Friendship.objects.get(pk=pk, user=profile)
-        except Friendship.DoesNotExist:
-            return Response({'detail': 'Not found.'}, status=404)
-        friendship.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ══════════════════════════════════════════════════════
@@ -1358,12 +1276,6 @@ class UserPublicProfileView(APIView):
         data['can_view_shared_templates'] = can_view_shared_templates
         data['can_view_activity'] = can_view_activity
 
-        # Legacy friendship status (compat)
-        friendship = Friendship.objects.filter(
-            (Q(user=my_profile, friend=target) | Q(user=target, friend=my_profile))
-        ).first()
-        data['friendship'] = FriendshipSerializer(friendship).data if friendship else None
-
         return Response(data)
 
 
@@ -1378,6 +1290,10 @@ class GroupFeedView(APIView):
             group = Group.objects.get(pk=pk)
         except Group.DoesNotExist:
             return Response({'detail': 'Group not found.'}, status=404)
+
+        # Private groups: only members can read the activity feed.
+        if not GroupMember.objects.filter(group=group, user=request.user.profile).exists():
+            return Response([])
 
         qs = WorkoutFeed.objects.filter(
             group=group
@@ -1395,6 +1311,10 @@ class GroupLeaderboardView(APIView):
             group = Group.objects.get(pk=pk)
         except Group.DoesNotExist:
             return Response({'detail': 'Group not found.'}, status=404)
+
+        # Private groups: only members can read the leaderboard.
+        if not GroupMember.objects.filter(group=group, user=request.user.profile).exists():
+            return Response([])
 
         member_profiles = Profile.objects.filter(
             group_memberships__group=group
@@ -1457,6 +1377,10 @@ class GroupChallengeListCreateView(APIView):
             group = Group.objects.get(pk=pk)
         except Group.DoesNotExist:
             return Response({'detail': 'Group not found.'}, status=404)
+
+        # Private groups: only members can read challenges.
+        if not GroupMember.objects.filter(group=group, user=request.user.profile).exists():
+            return Response([])
 
         challenges = Challenge.objects.filter(group=group).prefetch_related('participants__user')
         return Response(

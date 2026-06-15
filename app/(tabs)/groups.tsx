@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,9 +21,11 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuth } from '@/contexts/AuthContext';
 import { useGroupInvites } from '@/contexts/GroupInvitesContext';
 import { useCloseModalsWhenPaywallOpens, usePaywall } from '@/contexts/PaywallContext';
+import { useRevenueCatOptional } from '@/contexts/RevenueCatContext';
 import { Card } from '@/components/Card';
 import { Input } from '@/components/Input';
 import { Button } from '@/components/Button';
+import { ProLockScreen } from '@/components/ProLockScreen';
 import { getAndClearOpenGroupAfterTabsNav } from '@/lib/groupInviteStorage';
 import {
   apiGetFeed,
@@ -35,10 +37,8 @@ import {
   apiUpdateGroup,
   apiDeleteGroup,
   apiRemoveGroupMember,
-  apiToggleFollow,
   apiGetFriends,
   apiSearchUsers,
-  apiGetUserProfile,
   apiGetGroupFeed,
   apiGetGroupLeaderboard,
   apiGetGroupChallenges,
@@ -65,12 +65,10 @@ import {
   UserCheck,
   Copy,
   Dumbbell,
-  Flame,
   TrendingUp,
   Send,
   Globe,
   Lock,
-  Award,
   Heart,
   MessageSquarePlus,
   Share2,
@@ -79,27 +77,45 @@ import {
   Clock,
   LogOut,
   Link,
+  Zap,
+  Flame,
+  Repeat,
+  type LucideIcon,
 } from 'lucide-react-native';
 
 
-type Screen = 'hub' | 'groupDetail' | 'userProfile';
+type Screen = 'hub' | 'groupDetail';
 
-const CHALLENGE_TYPES = [
-  { value: 'total_workouts', label: 'Total Workouts', icon: '🏋️' },
-  { value: 'total_xp', label: 'Total XP', icon: '⚡' },
-  { value: 'streak', label: 'Streak Days', icon: '🔥' },
-  { value: 'total_reps', label: 'Total Reps', icon: '💪' },
+const CHALLENGE_TYPES: { value: string; label: string; Icon: LucideIcon }[] = [
+  { value: 'total_workouts', label: 'Total Workouts', Icon: Dumbbell },
+  { value: 'total_xp', label: 'Total XP', Icon: Zap },
+  { value: 'streak', label: 'Streak Days', Icon: Flame },
+  { value: 'total_reps', label: 'Total Reps', Icon: Repeat },
 ];
 
+function ChallengeTypeGlyph({
+  value,
+  size = 20,
+  color = '#4C91FF',
+}: {
+  value: string;
+  size?: number;
+  color?: string;
+}) {
+  const Icon = CHALLENGE_TYPES.find((t) => t.value === value)?.Icon ?? Target;
+  return <Icon color={color} size={size} />;
+}
+
 export default function GroupsScreen() {
-  const { profile, refreshProfile } = useAuth();
+  const { profile } = useAuth();
   const { invites: pendingGroupInvites, refreshInvites } = useGroupInvites();
   const showPaywall = usePaywall();
+  const rc = useRevenueCatOptional();
+  const proActive = Boolean(rc?.isEffectivelyPro || profile?.is_pro);
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   const [screen, setScreen] = useState<Screen>('hub');
-  const [previousScreen, setPreviousScreen] = useState<Screen>('hub');
 
   // Hub data
   const [feed, setFeed] = useState<any[]>([]);
@@ -131,12 +147,6 @@ export default function GroupsScreen() {
   const [challengeTarget, setChallengeTarget] = useState('10');
   const [challengeDays, setChallengeDays] = useState('7');
   const [creatingChallenge, setCreatingChallenge] = useState(false);
-
-  // User profile
-  const [viewedUser, setViewedUser] = useState<any>(null);
-  const [userProfileLoading, setUserProfileLoading] = useState(false);
-  const [profileTab, setProfileTab] = useState<'workouts' | 'activity'>('workouts');
-  const [followLoading, setFollowLoading] = useState(false);
 
   // Share workout modal
   const [showShareModal, setShowShareModal] = useState(false);
@@ -370,6 +380,18 @@ export default function GroupsScreen() {
     } catch {}
   };
 
+  const openGroupInviteOptions = () => {
+    Alert.alert(
+      'Add people',
+      'Invite your friends inside the app, or share a join link with anyone.',
+      [
+        { text: 'Invite friends', onPress: () => void openInviteFriendsModal() },
+        { text: 'Share invite link', onPress: () => void handleShareGroup() },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  };
+
   const inviteFriendInApp = async (userId: number) => {
     if (!selectedGroup) return;
     setInviteSendingUserId(userId);
@@ -474,37 +496,9 @@ export default function GroupsScreen() {
     finally { setSavingSettings(false); }
   };
 
-  const navigateTo = (newScreen: Screen) => {
-    setPreviousScreen(screen);
-    setScreen(newScreen);
-  };
-
-  const goBack = () => {
-    setScreen(previousScreen);
-  };
-
-  const openUserProfile = async (userId: number | string) => {
+  const openUserProfile = (userId: number | string) => {
     if (String(userId) === String(profile?.id)) return;
-    navigateTo('userProfile');
-    setUserProfileLoading(true);
-    setProfileTab('workouts');
-    try {
-      const { data } = await apiGetUserProfile(userId);
-      if (data) setViewedUser(data);
-    } catch { Alert.alert('Error', 'Failed to load profile'); goBack(); }
-    finally { setUserProfileLoading(false); }
-  };
-
-  const handleToggleFollow = async () => {
-    if (!viewedUser) return;
-    setFollowLoading(true);
-    try {
-      await apiToggleFollow(viewedUser.id);
-      const { data } = await apiGetUserProfile(viewedUser.id);
-      if (data) setViewedUser(data);
-      await loadFriends();
-    } catch { Alert.alert('Error', 'Failed'); }
-    finally { setFollowLoading(false); }
+    router.push(`/user/${userId}`);
   };
 
   const handleHubSearch = async (q: string) => {
@@ -725,239 +719,7 @@ export default function GroupsScreen() {
   //  RENDER: Screen Content
   // ═══════════════════════════════════════════════════
   function renderScreenContent() {
-    // USER PROFILE
-    if (screen === 'userProfile') {
-      return (
-        <LinearGradient colors={['#1E1E1E', '#0A0A0A']} style={styles.container}>
-          {userProfileLoading ? (
-            <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#4C91FF" /></View>
-          ) : viewedUser ? (
-            <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-            <ScrollView
-              contentContainerStyle={[
-                styles.scrollContent,
-                {
-                  paddingTop: 8,
-                  paddingBottom: 100 + insets.bottom,
-                },
-              ]}
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={styles.screenHeader}>
-                <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={12}>
-                  <ChevronLeft color="#FFFFFF" size={24} />
-                </TouchableOpacity>
-                <Text style={styles.screenTitle} numberOfLines={1}>
-                  {viewedUser.username}
-                </Text>
-                <View style={{ width: 40 }} />
-              </View>
-
-              <View style={styles.socialProfileHeader}>
-                <View style={styles.socialProfileAvatar}>
-                  <Text style={styles.socialProfileAvatarText}>{getInitial(viewedUser.username)}</Text>
-                  <View style={styles.socialLevelBadge}>
-                    <Text style={styles.socialLevelText}>{viewedUser.level}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.socialStatsRow}>
-                  <View style={styles.socialStatItem}>
-                    <Text style={styles.socialStatNum}>{viewedUser.total_workouts || 0}</Text>
-                    <Text style={styles.socialStatLabel}>Workouts</Text>
-                  </View>
-                  <View style={styles.socialStatDivider} />
-                  <View style={styles.socialStatItem}>
-                    <Text style={styles.socialStatNum}>{viewedUser.friends_count || 0}</Text>
-                    <Text style={styles.socialStatLabel}>Friends</Text>
-                  </View>
-                  <View style={styles.socialStatDivider} />
-                  <View style={styles.socialStatItem}>
-                    <Text style={styles.socialStatNum}>{viewedUser.followers_count || 0}</Text>
-                    <Text style={styles.socialStatLabel}>Followers</Text>
-                  </View>
-                </View>
-
-                {viewedUser.is_friend ? (
-                  <TouchableOpacity style={styles.friendsBtn} onPress={handleToggleFollow} disabled={followLoading}>
-                    <UserCheck color="#51CF66" size={16} />
-                    <Text style={styles.friendsBtnText}>Friends</Text>
-                  </TouchableOpacity>
-                ) : viewedUser.is_following ? (
-                  <TouchableOpacity style={styles.followingBtn} onPress={handleToggleFollow} disabled={followLoading}>
-                    <Text style={styles.followingBtnText}>{followLoading ? '...' : 'Following'}</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity style={styles.followBtn} onPress={handleToggleFollow} disabled={followLoading}>
-                    <UserPlus color="#FFFFFF" size={16} />
-                    <Text style={styles.followBtnText}>{followLoading ? '...' : 'Follow'}</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {(viewedUser.goal || viewedUser.experience_level) && (
-                <View style={styles.bioSection}>
-                  {viewedUser.goal && <Text style={styles.bioGoal}>{viewedUser.goal}</Text>}
-                  {viewedUser.experience_level && (
-                    <View style={styles.bioExpBadge}>
-                      <Text style={styles.bioExpText}>{viewedUser.experience_level}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              <View style={styles.socialInfoRow}>
-                <View style={styles.socialInfoChip}>
-                  <Flame color="#FF922B" size={14} />
-                  <Text style={styles.socialInfoChipText}>{viewedUser.current_streak || 0} day streak</Text>
-                </View>
-                <View style={styles.socialInfoChip}>
-                  <TrendingUp color="#4C91FF" size={14} />
-                  <Text style={styles.socialInfoChipText}>{viewedUser.xp || 0} XP</Text>
-                </View>
-              </View>
-
-              {viewedUser.badges && viewedUser.badges.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Badges</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-                    {viewedUser.badges.map((ub: any) => (
-                      <View key={ub.id} style={styles.badgeChip}>
-                        <Award color="#FFB547" size={18} />
-                        <Text style={styles.badgeChipName}>{ub.badge?.name || 'Badge'}</Text>
-                      </View>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-
-              <View style={styles.tabBar}>
-                {(['workouts', 'activity'] as const).map(tab => (
-                  <TouchableOpacity key={tab} style={[styles.tab, profileTab === tab && styles.tabActive]} onPress={() => setProfileTab(tab)}>
-                    <Text style={[styles.tabText, profileTab === tab && styles.tabTextActive]}>
-                      {tab === 'workouts' ? 'Workouts' : 'Activity'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {profileTab === 'workouts' &&
-                (viewedUser.can_view_shared_templates === false ? (
-                  <View style={styles.section}>
-                    <Card style={styles.profileGateCard}>
-                      <View style={styles.profileGateInner}>
-                        <Crown color="#FFB547" size={36} />
-                        <Text style={styles.profileGateTitle}>Workouts are for Leveld Pro</Text>
-                        <Text style={styles.profileGateText}>
-                          Subscribe to browse and copy this member&apos;s shared workouts.
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.profileGateBtn}
-                          onPress={() =>
-                            showPaywall(async () => {
-                              await refreshProfile();
-                              if (viewedUser) {
-                                try {
-                                  const { data } = await apiGetUserProfile(viewedUser.id);
-                                  if (data) setViewedUser(data);
-                                } catch {}
-                              }
-                            })
-                          }
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.profileGateBtnText}>Unlock with Pro</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </Card>
-                  </View>
-                ) : (
-                  viewedUser.templates && (
-                    <View style={styles.section}>
-                      {viewedUser.templates.length === 0 && (
-                        <Text style={styles.emptyText}>No workouts shared yet</Text>
-                      )}
-                      {viewedUser.templates.map((t: any) => (
-                        <Card key={t.id} style={styles.templateCardSmall}>
-                          <View style={styles.templateCardRow}>
-                            <TouchableOpacity
-                              style={styles.templateCardTap}
-                              onPress={() => setPreviewTemplate(t)}
-                              activeOpacity={0.7}
-                            >
-                              <View style={[styles.templateCardIcon, { backgroundColor: (t.color || '#4C91FF') + '20' }]}>
-                                <Dumbbell color={t.color || '#4C91FF'} size={20} />
-                              </View>
-                              <View style={[styles.templateCardInfo, styles.templateCardInfoShrink]}>
-                                <Text style={styles.templateCardName} numberOfLines={1}>
-                                  {t.name}
-                                </Text>
-                                <Text style={styles.templateCardMeta}>
-                                  {t.exercise_count} exercise{t.exercise_count !== 1 ? 's' : ''}
-                                </Text>
-                              </View>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.templateCopyChip}
-                              onPress={() => setPreviewTemplate(t)}
-                              activeOpacity={0.85}
-                              accessibilityRole="button"
-                              accessibilityLabel="Copy workout"
-                            >
-                              <Copy color="#7FB1FF" size={14} />
-                              <Text style={styles.templateCopyChipText}>Copy</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </Card>
-                      ))}
-                    </View>
-                  )
-                ))}
-
-              {profileTab === 'activity' &&
-                (viewedUser.can_view_activity === false ? (
-                  <View style={styles.section}>
-                    <Card style={styles.profileGateCard}>
-                      <View style={styles.profileGateInner}>
-                        <Users color="#4C91FF" size={36} />
-                        <Text style={styles.profileGateTitle}>Friends only</Text>
-                        <Text style={styles.profileGateText}>
-                          Recent activity is only visible when you and this member follow each other.
-                        </Text>
-                      </View>
-                    </Card>
-                  </View>
-                ) : (
-                  viewedUser.recent_workouts && (
-                    <View style={styles.section}>
-                      {viewedUser.recent_workouts.length === 0 && (
-                        <Text style={styles.emptyText}>No recent activity</Text>
-                      )}
-                      {viewedUser.recent_workouts.slice(0, 8).map((w: any) => (
-                        <Card key={w.id} style={styles.workoutCard}>
-                          <View style={styles.workoutCardHeader}>
-                            <Text style={styles.workoutCardDate}>
-                              {new Date(w.workout_date).toLocaleDateString()}
-                            </Text>
-                            <View style={styles.xpBadge}>
-                              <Text style={styles.xpBadgeText}>+{w.xp_earned} XP</Text>
-                            </View>
-                          </View>
-                          <Text style={styles.workoutCardStats}>
-                            {w.total_sets} sets · {w.total_reps} reps · {w.duration_minutes} min
-                          </Text>
-                          {w.notes ? <Text style={styles.workoutCardNotes}>{w.notes}</Text> : null}
-                        </Card>
-                      ))}
-                    </View>
-                  )
-                ))}
-            </ScrollView>
-            </SafeAreaView>
-          ) : null}
-        </LinearGradient>
-      );
-    }
+    // USER PROFILE now lives at its own route: app/user/[id].tsx (openUserProfile -> router.push).
 
     // GROUP DETAIL
     if (screen === 'groupDetail') {
@@ -1051,7 +813,7 @@ export default function GroupsScreen() {
                   {/* CTA */}
                   {selectedGroup.is_member ? (
                     <View style={gdStyles.heroCTARow}>
-                      <TouchableOpacity style={gdStyles.inviteBtn} onPress={handleShareGroup}>
+                      <TouchableOpacity style={gdStyles.inviteBtn} onPress={openGroupInviteOptions}>
                         <Share2 color="#FFFFFF" size={16} />
                         <Text style={gdStyles.inviteBtnText}>Invite</Text>
                       </TouchableOpacity>
@@ -1227,7 +989,7 @@ export default function GroupsScreen() {
                         <View key={ch.id} style={gdStyles.challengeItem}>
                           <View style={gdStyles.challengeItemHeader}>
                             <View style={gdStyles.challengeItemIcon}>
-                              <Text style={{ fontSize: 22 }}>{typeInfo?.icon || '🎯'}</Text>
+                              <ChallengeTypeGlyph value={ch.challenge_type} size={22} />
                             </View>
                             <View style={{ flex: 1 }}>
                               <Text style={gdStyles.challengeItemName}>{ch.name}</Text>
@@ -1272,13 +1034,12 @@ export default function GroupsScreen() {
                       <>
                         <Text style={[gdStyles.challengeSectionLabel, { marginTop: 24 }]}>Past Challenges</Text>
                         {groupChallenges.filter((c: any) => !c.is_active).map((ch: any) => {
-                          const typeInfo = CHALLENGE_TYPES.find(t => t.value === ch.challenge_type);
                           const progressPct = ch.target_value > 0 ? Math.min(1, (ch.my_progress || 0) / ch.target_value) : 0;
                           return (
                             <View key={ch.id} style={[gdStyles.challengeItem, { opacity: 0.6 }]}>
                               <View style={gdStyles.challengeItemHeader}>
                                 <View style={gdStyles.challengeItemIcon}>
-                                  <Text style={{ fontSize: 22 }}>{typeInfo?.icon || '🎯'}</Text>
+                                  <ChallengeTypeGlyph value={ch.challenge_type} size={22} />
                                 </View>
                                 <View style={{ flex: 1 }}>
                                   <Text style={gdStyles.challengeItemName}>{ch.name}</Text>
@@ -1324,7 +1085,7 @@ export default function GroupsScreen() {
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <Text style={gdStyles.inviteFriendsBannerTitle}>Invite friends</Text>
                           <Text style={gdStyles.inviteFriendsBannerSub} numberOfLines={2}>
-                            Share the group link with Leveld friends who aren&apos;t in this group yet
+                            Send an in-app invite to friends who aren&apos;t in this group yet
                           </Text>
                         </View>
                         <ChevronRight color="#64748B" size={20} />
@@ -1661,6 +1422,23 @@ export default function GroupsScreen() {
   // ═══════════════════════════════════════════════════
   //  MAIN RETURN: screen content + always-mounted modals
   // ═══════════════════════════════════════════════════
+  if (!proActive) {
+    return (
+      <ProLockScreen
+        icon={Users}
+        title="Groups are a Pro feature"
+        subtitle="Train with friends, compete on leaderboards, and run challenges together."
+        features={[
+          'Create and join training groups',
+          'Group leaderboards and live activity feed',
+          'Run challenges and track progress together',
+          'Invite friends and share workout templates',
+        ]}
+        onUnlock={() => showPaywall()}
+      />
+    );
+  }
+
   return (
     <View style={{ flex: 1 }}>
       {renderScreenContent()}
@@ -1724,7 +1502,7 @@ export default function GroupsScreen() {
                     style={[styles.challengeTypeBtn, challengeType === ct.value && styles.challengeTypeBtnActive]}
                     onPress={() => setChallengeType(ct.value)}
                   >
-                    <Text style={styles.challengeTypeIcon}>{ct.icon}</Text>
+                    <ct.Icon color={challengeType === ct.value ? '#FFFFFF' : '#94A3B8'} size={18} />
                     <Text style={[styles.challengeTypeLabel, challengeType === ct.value && { color: '#FFF' }]}>{ct.label}</Text>
                   </TouchableOpacity>
                 ))}
@@ -2161,7 +1939,6 @@ const styles = StyleSheet.create({
   challengeTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   challengeTypeBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#2A2A2A', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#333' },
   challengeTypeBtnActive: { borderColor: '#4C91FF', backgroundColor: '#1E2A3A' },
-  challengeTypeIcon: { fontSize: 16 },
   challengeTypeLabel: { color: '#999', fontSize: 13, fontWeight: '600' },
 
   // Feed

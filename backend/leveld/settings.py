@@ -115,6 +115,14 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Serve the React admin panel build (Vite base '/static/panel/') via WhiteNoise.
+# Only registered once the dashboard has been built to backend/panel_dist/.
+_PANEL_DIST = BASE_DIR / 'panel_dist'
+STATICFILES_DIRS = []
+if _PANEL_DIST.exists():
+    STATICFILES_DIRS.append(('panel', _PANEL_DIST))
+
 STORAGES = {
     'default': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',

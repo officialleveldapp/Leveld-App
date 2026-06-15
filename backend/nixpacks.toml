@@ -5,4 +5,5 @@
 cmds = ['pip install -r requirements.txt', 'python manage.py collectstatic --noinput']
 
 [start]
-cmd = 'gunicorn leveld.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4'
+# Run DB migrations on every deploy before booting the web server.
+cmd = 'python manage.py migrate --noinput && gunicorn leveld.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4'

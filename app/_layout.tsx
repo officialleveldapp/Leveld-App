@@ -27,7 +27,6 @@ function isTabAppPath(pathname: string): boolean {
     '/privacy',
     '/help-support',
     '/calendar',
-    '/calendar-workout',
   ];
   return tabRoots.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
@@ -46,8 +45,9 @@ function isSignedOutOnProtectedRoute(
     pathname === '/workout-detail' ||
     pathname === '/create-group' ||
     pathname === '/friends' ||
-    pathname.startsWith('/friends/') ||
-    pathname === '/exercise-stats'
+    pathname.startsWith('/user/') ||
+    pathname === '/exercise-stats' ||
+    pathname === '/calendar-workout'
   ) {
     return true;
   }
@@ -131,7 +131,10 @@ function RootStack() {
         <Stack.Screen name="workout-detail" />
         <Stack.Screen name="create-group" />
         <Stack.Screen name="friends" />
+        <Stack.Screen name="user/[id]" />
         <Stack.Screen name="exercise-stats" />
+        <Stack.Screen name="notification-settings" />
+        <Stack.Screen name="calendar-workout" />
         <Stack.Screen name="(tabs)" />
       </Stack>
     </View>

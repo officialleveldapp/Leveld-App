@@ -20,13 +20,18 @@ import { apiCreateGroup, apiCreateGroupChallenge } from '@/lib/api';
 import {
   X,
   ChevronLeft,
+  Dumbbell,
+  Zap,
+  Flame,
+  Repeat,
+  type LucideIcon,
 } from 'lucide-react-native';
 
-const CHALLENGE_TYPES = [
-  { value: 'total_workouts', label: 'Total Workouts', icon: '🏋️' },
-  { value: 'total_xp', label: 'Total XP', icon: '⚡' },
-  { value: 'streak', label: 'Streak Days', icon: '🔥' },
-  { value: 'total_reps', label: 'Total Reps', icon: '💪' },
+const CHALLENGE_TYPES: { value: string; label: string; Icon: LucideIcon }[] = [
+  { value: 'total_workouts', label: 'Total Workouts', Icon: Dumbbell },
+  { value: 'total_xp', label: 'Total XP', Icon: Zap },
+  { value: 'streak', label: 'Streak Days', Icon: Flame },
+  { value: 'total_reps', label: 'Total Reps', Icon: Repeat },
 ];
 
 export default function CreateGroupScreen() {
@@ -204,7 +209,7 @@ export default function CreateGroupScreen() {
                     style={[styles.challengeTypeBtn, wizardChType === ct.value && styles.challengeTypeBtnActive]}
                     onPress={() => setWizardChType(ct.value)}
                   >
-                    <Text style={styles.challengeTypeIcon}>{ct.icon}</Text>
+                    <ct.Icon color={wizardChType === ct.value ? '#FFFFFF' : '#94A3B8'} size={18} />
                     <Text style={[styles.challengeTypeLabel, wizardChType === ct.value && { color: '#FFF' }]}>
                       {ct.label}
                     </Text>
@@ -312,7 +317,6 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   challengeTypeBtnActive: { borderColor: '#4C91FF', backgroundColor: '#1E2A3A' },
-  challengeTypeIcon: { fontSize: 16 },
   challengeTypeLabel: { color: '#999', fontSize: 13, fontWeight: '600' },
   targetRow: { flexDirection: 'row', gap: 12 },
   skipLink: { alignItems: 'center', paddingVertical: 14, marginBottom: 8 },

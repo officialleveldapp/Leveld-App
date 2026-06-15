@@ -1,9 +1,12 @@
-from django.urls import path
+from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import views
 
 urlpatterns = [
+    # Admin panel API (superuser-only) — /api/admin/...
+    path('admin/', include('core.admin_api.urls')),
+
     # Auth
     path('auth/register/', views.RegisterView.as_view(), name='register'),
     path('auth/login/', views.LoginView.as_view(), name='login'),
@@ -40,10 +43,6 @@ urlpatterns = [
     # Follow system
     path('follows/<int:user_id>/', views.FollowToggleView.as_view(), name='follow_toggle'),
     path('friends/', views.FriendsListView.as_view(), name='friends_list'),
-
-    # Friendships (legacy compat)
-    path('friendships/', views.FriendshipListCreateView.as_view(), name='friendships'),
-    path('friendships/<uuid:pk>/', views.FriendshipDetailView.as_view(), name='friendship_detail'),
 
     # Feed
     path('feed/', views.FeedListView.as_view(), name='feed'),

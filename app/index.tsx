@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppLogo } from '@/components/AppLogo';
 import { Button } from '@/components/Button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,33 +17,51 @@ import {
   profileNeedsOnboarding,
   isPostOnboardingPaywallPending,
 } from '@/lib/postRegisterFlow';
-import { Dumbbell, TrendingUp, Users } from 'lucide-react-native';
+import { Dumbbell, Flame, Users } from 'lucide-react-native';
 import { getWelcomeLogoLayout } from '@/lib/welcomeLogoLayout';
 
 const { width } = Dimensions.get('window');
 const { layoutSize: LOGO_LAYOUT_SIZE, visualScale: LOGO_VISUAL_SCALE } =
   getWelcomeLogoLayout(width);
 
+const FEATURES = [
+  {
+    Icon: Dumbbell,
+    color: '#4C91FF',
+    bg: 'rgba(76, 145, 255, 0.12)',
+    title: 'Track workouts',
+    description: 'Log sets, reps, and PRs in seconds',
+  },
+  {
+    Icon: Flame,
+    color: '#FFB547',
+    bg: 'rgba(255, 181, 71, 0.12)',
+    title: 'Build streaks',
+    description: 'Stay consistent and earn bonus XP',
+  },
+  {
+    Icon: Users,
+    color: '#4C91FF',
+    bg: 'rgba(76, 145, 255, 0.12)',
+    title: 'Compete together',
+    description: 'Join groups and challenge friends',
+  },
+] as const;
+
 export default function WelcomeScreen() {
   const router = useRouter();
   const segments = useSegments();
   const { user, loading, profile } = useAuth();
+  const insets = useSafeAreaInsets();
 
-  // First launch: loading=true → start at 0 so intro runs under the Loading… screen.
-  // Remount after sign-out: loading=false → start visible (no flash before animations run).
   const fadeIn = useRef(new Animated.Value(loading ? 0 : 1)).current;
-  const fadeInDown = useRef(new Animated.Value(loading ? 0 : 1)).current;
-  const slideDown = useRef(new Animated.Value(loading ? -20 : 0)).current;
-
-  const iconScale1 = useRef(new Animated.Value(1)).current;
-  const iconScale2 = useRef(new Animated.Value(1)).current;
-  const iconScale3 = useRef(new Animated.Value(1)).current;
+  const heroSlide = useRef(new Animated.Value(loading ? 16 : 0)).current;
+  const featuresOpacity = useRef(new Animated.Value(loading ? 0 : 1)).current;
+  const featuresSlide = useRef(new Animated.Value(loading ? 20 : 0)).current;
+  const ctaOpacity = useRef(new Animated.Value(loading ? 0 : 1)).current;
 
   useEffect(() => {
     if (loading || !user || !profile) return;
-    // If this screen stays mounted under the stack while the user is already in the app,
-    // this effect can re-run and accidentally reset navigation to tab home.
-    // Only redirect when the currently active route is actually welcome (`/` or `/index`).
     const seg = segments as string[];
     const onWelcomeRoute =
       seg.length === 0 ||
@@ -72,50 +91,42 @@ export default function WelcomeScreen() {
   }, [user, loading, profile, segments, router]);
 
   useEffect(() => {
-    // Fade in animations
-    Animated.timing(fadeIn, {
-      toValue: 1,
-      duration: 600,
-      useNativeDriver: true,
-    }).start();
-
-    Animated.parallel([
-      Animated.timing(fadeInDown, {
+    Animated.stagger(120, [
+      Animated.parallel([
+        Animated.timing(fadeIn, {
+          toValue: 1,
+          duration: 520,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(heroSlide, {
+          toValue: 0,
+          duration: 520,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(featuresOpacity, {
+          toValue: 1,
+          duration: 480,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(featuresSlide, {
+          toValue: 0,
+          duration: 480,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(ctaOpacity, {
         toValue: 1,
-        duration: 500,
-        delay: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideDown, {
-        toValue: 0,
-        duration: 500,
-        delay: 150,
+        duration: 400,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start();
-
-    // Pulsing icon animations
-    const createPulse = (anim: Animated.Value, duration: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(anim, {
-            toValue: 1.15,
-            duration,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(anim, {
-            toValue: 1,
-            duration,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-    createPulse(iconScale1, 1200).start();
-    createPulse(iconScale2, 1400).start();
-    createPulse(iconScale3, 1600).start();
   }, []);
 
   if (loading) {
@@ -129,14 +140,24 @@ export default function WelcomeScreen() {
 
   return (
     <LinearGradient colors={['#1E1E1E', '#0A0A0A']} style={styles.container}>
-      {/* Top section: branding */}
-      <View style={styles.topSection}>
+      <View style={styles.glowBlue} pointerEvents="none" />
+      <View style={styles.glowGold} pointerEvents="none" />
+
+      <View
+        style={[
+          styles.content,
+          {
+            paddingTop: insets.top + 24,
+            paddingBottom: Math.max(insets.bottom, 20) + 8,
+          },
+        ]}
+      >
         <Animated.View
           style={[
-            styles.logoWrap,
+            styles.hero,
             {
               opacity: fadeIn,
-              transform: [{ translateY: slideDown }],
+              transform: [{ translateY: heroSlide }],
             },
           ]}
         >
@@ -148,81 +169,51 @@ export default function WelcomeScreen() {
           >
             <AppLogo size={LOGO_LAYOUT_SIZE} />
           </View>
+          <Text style={styles.brandName}>Leveld</Text>
+          <Text style={styles.headline}>Level up your fitness</Text>
+          <Text style={styles.subhead}>
+            The simple way to train, track progress, and stay accountable.
+          </Text>
         </Animated.View>
-        <Animated.Text
+
+        <Animated.View
           style={[
-            styles.tagline,
-            { opacity: fadeInDown, transform: [{ translateY: slideDown }] },
+            styles.features,
+            {
+              opacity: featuresOpacity,
+              transform: [{ translateY: featuresSlide }],
+            },
           ]}
         >
-          Level Up Your Fitness
-        </Animated.Text>
-      </View>
+          {FEATURES.map(({ Icon, color, bg, title, description }) => (
+            <View key={title} style={styles.featureRow}>
+              <View style={[styles.featureIcon, { backgroundColor: bg }]}>
+                <Icon color={color} size={20} strokeWidth={2.25} />
+              </View>
+              <View style={styles.featureCopy}>
+                <Text style={styles.featureTitle}>{title}</Text>
+                <Text style={styles.featureDescription}>{description}</Text>
+              </View>
+            </View>
+          ))}
+        </Animated.View>
 
-      {/* Middle section: icons + features */}
-      <View style={styles.middleSection}>
-        <View style={styles.iconRow}>
-          <Animated.View
-            style={[styles.iconCircle, { transform: [{ scale: iconScale1 }] }]}
-          >
-            <Dumbbell color="#4C91FF" size={32} />
-          </Animated.View>
-          <Animated.View
-            style={[
-              styles.iconCircle,
-              styles.iconCircleAccent,
-              { transform: [{ scale: iconScale2 }] },
-            ]}
-          >
-            <TrendingUp color="#FFB547" size={32} />
-          </Animated.View>
-          <Animated.View
-            style={[styles.iconCircle, { transform: [{ scale: iconScale3 }] }]}
-          >
-            <Users color="#4C91FF" size={32} />
-          </Animated.View>
-        </View>
-
-        <View style={styles.features}>
-          <View style={styles.featureItem}>
-            <Text style={styles.featureTitle}>Track</Text>
-            <Text style={styles.featureText}>
-              Log workouts{'\n'}with ease
-            </Text>
-          </View>
-          <View style={styles.featureDivider} />
-          <View style={styles.featureItem}>
-            <Text style={styles.featureTitle}>Streak</Text>
-            <Text style={styles.featureText}>
-              Stay consistent{'\n'}earn bonus XP
-            </Text>
-          </View>
-          <View style={styles.featureDivider} />
-          <View style={styles.featureItem}>
-            <Text style={styles.featureTitle}>Compete</Text>
-            <Text style={styles.featureText}>
-              Challenge friends{'\n'}& groups
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Bottom section: buttons */}
-      <View style={styles.bottomSection}>
-        <Button
-          title="Get Started"
-          onPress={() => router.push('/auth/signup')}
-          style={styles.button}
-        />
-        <Button
-          title="Log In"
-          variant="outline"
-          onPress={() => router.push('/auth/login')}
-          style={styles.button}
-        />
-        <Text style={styles.legal}>
-          By continuing you agree to our Terms & Privacy Policy
-        </Text>
+        <Animated.View style={[styles.cta, { opacity: ctaOpacity }]}>
+          <Button
+            title="Get Started"
+            onPress={() => router.push('/auth/signup')}
+            style={styles.button}
+          />
+          <Button
+            title="Log In"
+            variant="outline"
+            onPress={() => router.push('/auth/login')}
+            style={styles.button}
+          />
+          <Text style={styles.legal}>
+            By continuing you agree to our Terms & Privacy Policy
+          </Text>
+        </Animated.View>
       </View>
     </LinearGradient>
   );
@@ -231,7 +222,11 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 24,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 28,
+    justifyContent: 'space-between',
   },
   loadingContainer: {
     flex: 1,
@@ -244,98 +239,102 @@ const styles = StyleSheet.create({
     color: '#999999',
     fontSize: 16,
   },
-
-  // ── Top ──
-  topSection: {
-    flex: 2.5,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    paddingBottom: 12,
+  glowBlue: {
+    position: 'absolute',
+    top: -40,
+    alignSelf: 'center',
+    width: width * 0.85,
+    height: width * 0.85,
+    borderRadius: width * 0.425,
+    backgroundColor: 'rgba(76, 145, 255, 0.07)',
   },
-  logoWrap: {
-    marginBottom: 4,
-    alignItems: 'center',
+  glowGold: {
+    position: 'absolute',
+    top: width * 0.35,
+    right: -width * 0.25,
+    width: width * 0.55,
+    height: width * 0.55,
+    borderRadius: width * 0.275,
+    backgroundColor: 'rgba(255, 181, 71, 0.04)',
   },
-  /** Fixed layout size so scale doesn't shift siblings; RN transform doesn't expand flex. */
+  hero: {
+    alignItems: 'center',
+    paddingTop: 8,
+  },
   logoScaleBox: {
     width: LOGO_LAYOUT_SIZE,
     height: LOGO_LAYOUT_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 8,
   },
-  tagline: {
+  brandName: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  headline: {
     color: '#4C91FF',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
-    marginTop: 4,
+    marginBottom: 10,
   },
-
-  // ── Middle ──
-  middleSection: {
-    flex: 3,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  iconRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 24,
-    marginBottom: 32,
-  },
-  iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#1E2A3A',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconCircleAccent: {
-    backgroundColor: '#2A2200',
+  subhead: {
+    color: '#8A8A8A',
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    maxWidth: 300,
   },
   features: {
+    gap: 14,
+    paddingVertical: 8,
+  },
+  featureRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    width: '100%',
-  },
-  featureItem: {
-    flex: 1,
     alignItems: 'center',
+    gap: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
-  featureDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: '#2A2A2A',
-    marginTop: 4,
+  featureIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureCopy: {
+    flex: 1,
+    gap: 2,
   },
   featureTitle: {
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
-    marginBottom: 4,
   },
-  featureText: {
-    color: '#777',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 17,
+  featureDescription: {
+    color: '#6E6E6E',
+    fontSize: 13,
+    lineHeight: 18,
   },
-
-  // ── Bottom ──
-  bottomSection: {
-    flex: 2.5,
-    justifyContent: 'center',
+  cta: {
     gap: 12,
-    paddingBottom: 24,
   },
   button: {
     width: '100%',
   },
   legal: {
-    color: '#555',
+    color: '#4A4A4A',
     fontSize: 11,
     textAlign: 'center',
     marginTop: 4,
+    lineHeight: 16,
   },
 });

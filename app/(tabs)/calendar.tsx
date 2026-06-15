@@ -99,7 +99,7 @@ export default function CalendarScreen() {
     const workout = workouts.find((w) => w.workout_date === dateStr);
     if (!workout) return;
     router.push({
-      pathname: '/(tabs)/calendar-workout',
+      pathname: '/calendar-workout',
       params: { workoutId: workout.id, workoutDate: dateStr },
     });
   };

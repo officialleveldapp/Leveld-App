@@ -14,10 +14,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check, Crown, X } from 'lucide-react-native';
 import { AppLogo } from '@/components/AppLogo';
-import { useRevenueCat } from '@/contexts/RevenueCatContext';
+import { useRevenueCat, isRevenueCatConfiguredForBuild } from '@/contexts/RevenueCatContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { paywallAnnualSavingsPercentDisplay, paywallPriceCopy } from '@/lib/revenuecat/paywallDisplay';
-import { type ProPlanRow, selectMonthlyAndAnnualPackages } from '@/lib/revenuecat/selectProPlans';
+import { paywallPriceCopy } from '@/lib/revenuecat/paywallDisplay';
+import {
+  type ProPlanRow,
+  selectMonthlyAndAnnualPackages,
+  approxAnnualSavingsPercent,
+} from '@/lib/revenuecat/selectProPlans';
 import { getPurchasesErrorMessage } from '@/lib/revenuecat/purchasesError';
 import { customerInfoHasLeveldPro } from '@/lib/revenuecat/entitlements';
 
@@ -35,6 +39,37 @@ function legalUrl(kind: 'terms' | 'privacy'): string | undefined {
       : process.env.EXPO_PUBLIC_LEGAL_PRIVACY_URL;
   const u = key?.trim();
   return u || undefined;
+}
+
+/** How long to wait for the RevenueCat SDK before showing a connection error. */
+const RC_READY_TIMEOUT_MS = 12000;
+const NOT_AVAILABLE_MSG =
+  'In-app purchases aren\u2019t available on this device right now. Please try again later.';
+const TIMEOUT_MSG =
+  'Couldn\u2019t reach the App Store. Check your connection and try again.';
+
+/** Real localized store price (e.g. "$6.99"), falling back to marketing copy if missing. */
+function planPriceString(row: ProPlanRow): string {
+  const ps = row.pkg.product.priceString?.trim();
+  if (ps) return ps;
+  return row.tier === 'annual' ? paywallPriceCopy.yearly : paywallPriceCopy.monthly;
+}
+
+/** Per-month equivalent of an annual plan, in the product's own currency. */
+function annualPerMonthString(row: ProPlanRow): string {
+  const product = row.pkg.product;
+  const price = typeof product.price === 'number' ? product.price : 0;
+  if (price > 0) {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: product.currencyCode || 'USD',
+      }).format(price / 12);
+    } catch {
+      // Intl unavailable — fall back to marketing copy below.
+    }
+  }
+  return paywallPriceCopy.yearlyPerMonth;
 }
 
 export type LeveldProPaywallContentProps = {
@@ -98,12 +133,42 @@ export function LeveldProPaywallContent({
   }, [rc]);
 
   useEffect(() => {
-    if (rc.isReady) void load();
+    if (!isRevenueCatConfiguredForBuild()) {
+      setLoading(false);
+      setLoadError(NOT_AVAILABLE_MSG);
+      return;
+    }
+    if (rc.isReady) {
+      void load();
+      return;
+    }
+    // Configured but the SDK hasn't finished initializing — never spin forever.
+    const t = setTimeout(() => {
+      setLoading(false);
+      setLoadError(TIMEOUT_MSG);
+    }, RC_READY_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [rc.isReady, load]);
+
+  const handleRetry = useCallback(() => {
+    if (!isRevenueCatConfiguredForBuild()) {
+      setLoading(false);
+      setLoadError(NOT_AVAILABLE_MSG);
+      return;
+    }
+    if (rc.isReady) {
+      void load();
+    } else {
+      setLoadError(null);
+      setLoading(true);
+    }
   }, [rc.isReady, load]);
 
   const selectedRow = planRows.find((r) => r.pkg.identifier === selectedId);
 
-  const savingsPercent = paywallAnnualSavingsPercentDisplay();
+  const monthlyRow = planRows.find((r) => r.tier === 'monthly');
+  const annualRow = planRows.find((r) => r.tier === 'annual');
+  const savingsPercent = approxAnnualSavingsPercent(monthlyRow?.pkg, annualRow?.pkg) ?? 0;
 
   const handleSkip = async () => {
     await onDismiss();
@@ -211,7 +276,16 @@ export function LeveldProPaywallContent({
               <ActivityIndicator size="large" color="#4C91FF" />
             </View>
           ) : loadError ? (
-            <Text style={styles.error}>{loadError}</Text>
+            <View style={styles.errorBlock}>
+              <Text style={styles.error}>{loadError}</Text>
+              <TouchableOpacity
+                onPress={handleRetry}
+                style={styles.retryButton}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.retryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={styles.planList}>
               {planRows.map((row) => {
@@ -219,7 +293,7 @@ export function LeveldProPaywallContent({
                 const active = pkg.identifier === selectedId;
                 const isAnnual = tier === 'annual';
                 const subtitle = isAnnual
-                  ? `${paywallPriceCopy.yearlyPerMonth}/mo · billed yearly`
+                  ? `${annualPerMonthString(row)}/mo · billed yearly`
                   : 'Cancel anytime';
 
                 return (
@@ -258,8 +332,8 @@ export function LeveldProPaywallContent({
                       </View>
                       <Text style={styles.planPrice} numberOfLines={1}>
                         {isAnnual
-                          ? `${paywallPriceCopy.yearly}/yr`
-                          : `${paywallPriceCopy.monthly}/mo`}
+                          ? `${planPriceString(row)}/yr`
+                          : `${planPriceString(row)}/mo`}
                       </Text>
                     </View>
                   </Pressable>
@@ -289,10 +363,8 @@ export function LeveldProPaywallContent({
               ) : (
                 <Text style={styles.ctaLabel}>
                   {selectedRow
-                    ? `Subscribe \u2013 ${
-                        selectedRow.tier === 'annual'
-                          ? `${paywallPriceCopy.yearly}/yr`
-                          : `${paywallPriceCopy.monthly}/mo`
+                    ? `Subscribe \u2013 ${planPriceString(selectedRow)}/${
+                        selectedRow.tier === 'annual' ? 'yr' : 'mo'
                       }`
                     : 'Subscribe'}
                 </Text>
@@ -429,12 +501,30 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
     alignItems: 'center',
   },
+  errorBlock: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
   error: {
     color: '#FDA4AF',
     fontSize: 14,
     lineHeight: 21,
     marginBottom: 16,
     textAlign: 'center',
+  },
+  retryButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4C91FF',
+    backgroundColor: 'rgba(76, 145, 255, 0.12)',
+  },
+  retryText: {
+    color: '#7FB1FF',
+    fontSize: 15,
+    fontWeight: '800',
   },
   planList: {
     gap: 10,

@@ -371,40 +371,6 @@ export async function apiGetFriends(): Promise<{ data: any[]; error: any }> {
 }
 
 // ══════════════════════════════════════════════════════
-//  FRIENDSHIPS API (legacy compat)
-// ══════════════════════════════════════════════════════
-
-export async function apiGetFriendships(): Promise<{ data: any[]; error: any }> {
-  const result = await apiFetch<any[]>('/friendships/');
-  return { data: result.data || [], error: result.error };
-}
-
-export async function apiCreateFriendship(
-  friendId: number,
-): Promise<{ data: any; error: any }> {
-  return apiFetch('/friendships/', {
-    method: 'POST',
-    body: { friend_id: friendId },
-  });
-}
-
-export async function apiUpdateFriendship(
-  id: string,
-  status: string,
-): Promise<{ data: any; error: any }> {
-  return apiFetch(`/friendships/${id}/`, {
-    method: 'PATCH',
-    body: { status },
-  });
-}
-
-export async function apiDeleteFriendship(
-  id: string,
-): Promise<{ data: any; error: any }> {
-  return apiFetch(`/friendships/${id}/`, { method: 'DELETE' });
-}
-
-// ══════════════════════════════════════════════════════
 //  FEED API
 // ══════════════════════════════════════════════════════
 

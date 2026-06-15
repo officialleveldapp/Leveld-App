@@ -88,22 +88,6 @@ export interface DailyTip {
   text: string;
 }
 
-export interface Friendship {
-  id: string;
-  user_id: string;
-  friend_id: string;
-  status: 'pending' | 'accepted' | 'rejected';
-  created_at: string;
-  friend?: ProfilePublic;
-  sender?: ProfilePublic;
-}
-
-export interface FriendshipsResponse {
-  friends: Friendship[];
-  sent: Friendship[];
-  received: Friendship[];
-}
-
 export interface Group {
   id: string;
   name: string;
@@ -177,7 +161,16 @@ export interface PersonalRecord {
 export interface UserPublicProfile extends Profile {
   recent_workouts: Workout[];
   templates: WorkoutTemplate[];
-  friendship: Friendship | null;
+  badges?: { id: string; badge?: { name?: string } }[];
+  followers_count?: number;
+  following_count?: number;
+  friends_count?: number;
+  /** Current viewer follows this user. */
+  is_following?: boolean;
+  /** This user follows the current viewer. */
+  is_follower?: boolean;
+  /** Mutual follow — current viewer and this user are friends. */
+  is_friend?: boolean;
   /** Viewer may list this user's shared workout templates (Pro required when viewing others). */
   can_view_shared_templates?: boolean;
   /** Viewer may see recent workout activity (mutual follow required when viewing others). */

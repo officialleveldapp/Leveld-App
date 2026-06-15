@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from .workout_integrity import clamp_xp_earned
 from .models import (
-    Profile, Workout, Badge, UserBadge, Friendship, Follow,
+    Profile, Workout, Badge, UserBadge, Follow,
     Group, GroupMember, GroupInvite, Challenge, ChallengeParticipant,
     WorkoutFeed, FeedReaction, DailyTip,
     WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
@@ -177,22 +177,6 @@ class FollowSerializer(serializers.ModelSerializer):
         model = Follow
         fields = ['id', 'follower', 'following', 'created_at']
         read_only_fields = ['id', 'created_at']
-
-
-# ── Friendship (legacy, kept for compat) ─────────────
-
-class FriendshipSerializer(serializers.ModelSerializer):
-    friend = ProfilePublicSerializer(read_only=True)
-    sender = ProfilePublicSerializer(source='user', read_only=True)
-
-    class Meta:
-        model = Friendship
-        fields = ['id', 'user_id', 'friend_id', 'status', 'created_at', 'friend', 'sender']
-        read_only_fields = ['id', 'user_id', 'created_at']
-
-
-class FriendshipCreateSerializer(serializers.Serializer):
-    friend_id = serializers.IntegerField()
 
 
 # ── Group ─────────────────────────────────────────────

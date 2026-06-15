@@ -13,6 +13,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePaywall } from '@/contexts/PaywallContext';
+import { useRevenueCatOptional } from '@/contexts/RevenueCatContext';
 import { Card } from '@/components/Card';
 import { apiGetWorkouts, apiGetPersonalRecords } from '@/lib/api';
 import { Workout, PersonalRecord } from '@/types/database';
@@ -332,12 +334,30 @@ const CALENDAR_ROW_GAP = 8;
 
 export default function ProgressScreen() {
   const { profile } = useAuth();
+  const showPaywall = usePaywall();
+  const rc = useRevenueCatOptional();
+  const proActive = Boolean(rc?.isEffectivelyPro || profile?.is_pro);
   const { width: windowWidth } = useWindowDimensions();
   const [mode, setMode] = useState<ProgressMode>('calendar');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [prs, setPrs] = useState<PersonalRecord[]>([]);
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleSlug | null>(null);
+
+  const openStrengthMap = useCallback(() => {
+    if (proActive) {
+      setMode('strength');
+    } else {
+      showPaywall(() => setMode('strength'));
+    }
+  }, [proActive, showPaywall]);
+
+  // Revoke access if a subscription lapses while viewing the strength map.
+  useEffect(() => {
+    if (mode === 'strength' && !proActive) {
+      setMode('calendar');
+    }
+  }, [mode, proActive]);
 
   useEffect(() => {
     loadWorkouts();
@@ -411,7 +431,7 @@ export default function ProgressScreen() {
     const workout = workouts.find((w) => w.workout_date === dateStr);
     if (!workout) return;
     router.push({
-      pathname: '/(tabs)/calendar-workout',
+      pathname: '/calendar-workout',
       params: { workoutId: workout.id, workoutDate: dateStr },
     });
   };
@@ -516,12 +536,13 @@ export default function ProgressScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.modeButton, mode === 'strength' && styles.modeButtonActive]}
-              onPress={() => setMode('strength')}
+              onPress={openStrengthMap}
             >
               <Zap color={mode === 'strength' ? '#FFFFFF' : '#999999'} size={16} />
               <Text style={[styles.modeText, mode === 'strength' && styles.modeTextActive]}>
                 Strength Map
               </Text>
+              {!proActive && <Crown color="#FFB547" size={13} style={{ marginLeft: 2 }} />}
             </TouchableOpacity>
           </View>
         </Card>

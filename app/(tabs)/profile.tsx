@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,6 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
-  Linking,
-  Platform,
-  ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -34,17 +31,6 @@ import {
   apiGetFriends,
   apiGetExerciseLifetimeStats,
 } from '@/lib/api';
-import {
-  NOTIFICATION_VIBES,
-  DEFAULT_NOTIFICATION_PERSONALITY,
-  getNotificationPersonality,
-  getNotificationVibeRowsForProfileUi,
-  setNotificationPersonality,
-  scheduleDailyNotifications,
-  scheduleTestNotificationInSeconds,
-  type NotificationPersonality,
-} from '@/lib/notifications';
-import { isExpoGo } from '@/lib/superwallAvailability';
 import { Badge, UserBadge } from '@/types/database';
 import {
   Trophy,
@@ -59,6 +45,7 @@ import {
   Users,
   ChevronRight,
   Dumbbell,
+  Bell,
 } from 'lucide-react-native';
 
 export default function ProfileScreen() {
@@ -85,35 +72,10 @@ export default function ProfileScreen() {
 
   useCloseModalsWhenPaywallOpens(closeAllProfileModals);
 
-  const [notificationVibe, setNotificationVibe] = useState<NotificationPersonality>(
-    DEFAULT_NOTIFICATION_PERSONALITY,
-  );
-  const [notificationVibeOptions, setNotificationVibeOptions] = useState<
-    ReadonlyArray<{ id: NotificationPersonality; label: string; subtitle: string }>
-  >(NOTIFICATION_VIBES);
-  const [notificationVibeLoading, setNotificationVibeLoading] = useState(true);
   const [exerciseTotalsPreview, setExerciseTotalsPreview] = useState<{
     exerciseCount: number;
     totalReps: number;
   } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [v, rows] = await Promise.all([
-        getNotificationPersonality(),
-        getNotificationVibeRowsForProfileUi(),
-      ]);
-      if (!cancelled) {
-        setNotificationVibe(v);
-        setNotificationVibeOptions(rows);
-        setNotificationVibeLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const loadExerciseTotalsPreview = useCallback(async () => {
     try {
@@ -234,15 +196,32 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.compactMetricsRow}>
-            <View style={styles.compactMetric}>
+            <TouchableOpacity
+              style={styles.compactMetric}
+              onPress={() => router.push('/friends?tab=friends')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.compactMetricValue}>{friendsCount}</Text>
+              <Text style={styles.compactMetricLabel}>Friends</Text>
+            </TouchableOpacity>
+            <View style={styles.compactMetricDivider} />
+            <TouchableOpacity
+              style={styles.compactMetric}
+              onPress={() => router.push('/friends?tab=followers')}
+              activeOpacity={0.7}
+            >
               <Text style={styles.compactMetricValue}>{followersCount}</Text>
               <Text style={styles.compactMetricLabel}>Followers</Text>
-            </View>
+            </TouchableOpacity>
             <View style={styles.compactMetricDivider} />
-            <View style={styles.compactMetric}>
+            <TouchableOpacity
+              style={styles.compactMetric}
+              onPress={() => router.push('/friends?tab=following')}
+              activeOpacity={0.7}
+            >
               <Text style={styles.compactMetricValue}>{followingCount}</Text>
               <Text style={styles.compactMetricLabel}>Following</Text>
-            </View>
+            </TouchableOpacity>
             <View style={styles.compactMetricDivider} />
             <View style={styles.compactMetric}>
               <Text style={styles.compactMetricValue}>{profile.total_workouts}</Text>
@@ -412,79 +391,25 @@ export default function ProfileScreen() {
           ) : null}
         </Card>
 
-        <Card style={styles.notificationVibeCard}>
-          <Text style={styles.notificationVibeTitle}>Reminder vibe</Text>
-          <Text style={styles.notificationVibeHint}>
-            Pick how Leveld talks to you in daily reminders (8am, 4pm, 8pm). Preset lines only—no
-            custom text, so notifications stay safe and on-brand.
-          </Text>
-          {notificationVibeLoading ? (
-            <ActivityIndicator color="#4C91FF" style={styles.notificationVibeSpinner} />
-          ) : (
-            <>
-              <View style={styles.notificationVibeList}>
-                {notificationVibeOptions.map((v) => {
-                  const selected = notificationVibe === v.id;
-                  return (
-                    <TouchableOpacity
-                      key={v.id}
-                      style={[
-                        styles.notificationVibeRow,
-                        selected && styles.notificationVibeRowSelected,
-                      ]}
-                      onPress={async () => {
-                        setNotificationVibe(v.id);
-                        await setNotificationPersonality(v.id);
-                        await scheduleDailyNotifications();
-                      }}
-                      activeOpacity={0.85}
-                    >
-                      <View style={styles.notificationVibeRowText}>
-                        <Text
-                          style={[
-                            styles.notificationVibeLabel,
-                            selected && styles.notificationVibeLabelSelected,
-                          ]}
-                        >
-                          {v.label}
-                        </Text>
-                        <Text style={styles.notificationVibeSubtitle}>{v.subtitle}</Text>
-                      </View>
-                      {selected ? <Text style={styles.notificationVibeCheck}>✓</Text> : null}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Button
-                title="Send a preview"
-                variant="outline"
-                onPress={async () => {
-                  const send = async () => {
-                    const ok = await scheduleTestNotificationInSeconds(3);
-                    if (!ok) {
-                      Alert.alert(
-                        'Notifications',
-                        'Permission was not granted. Enable notifications for Leveld in Settings.',
-                      );
-                    }
-                  };
-                  if (isExpoGo()) {
-                    Alert.alert(
-                      'Expo Go',
-                      'Notifications are delivered by the Expo Go app, so the banner icon is Expo’s—not Leveld’s. Use a dev build (npx expo run:ios) to see your real app icon on alerts.',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Send anyway', onPress: () => void send() },
-                      ],
-                    );
-                    return;
-                  }
-                  await send();
-                }}
-              />
-            </>
-          )}
-        </Card>
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => router.push('/notification-settings')}
+          accessibilityRole="button"
+          accessibilityLabel="Notification settings"
+        >
+          <Card style={styles.exerciseTotalsCtaCard}>
+            <View style={styles.exerciseTotalsIcon}>
+              <Bell color="#4C91FF" size={22} />
+            </View>
+            <View style={styles.exerciseTotalsMid}>
+              <Text style={styles.exerciseTotalsTitle}>Notifications</Text>
+              <Text style={styles.exerciseTotalsSub}>
+                Choose which daily reminders you get, their times, and the vibe
+              </Text>
+            </View>
+            <ChevronRight color="#64748B" size={22} />
+          </Card>
+        </TouchableOpacity>
 
         <View style={styles.quickActionsSection}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -494,13 +419,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickActionPill}
-              onPress={() => {
-                if (Platform.OS === 'ios') {
-                  void Linking.openURL('app-settings:');
-                } else {
-                  void Linking.openSettings();
-                }
-              }}
+              onPress={() => router.push('/notification-settings')}
               activeOpacity={0.8}
             >
               <Text style={styles.quickActionText}>Notifications</Text>
@@ -917,68 +836,6 @@ const styles = StyleSheet.create({
   },
   rcButton: {
     marginBottom: 10,
-  },
-  notificationVibeCard: {
-    marginBottom: 28,
-    borderColor: 'rgba(76, 145, 255, 0.35)',
-    borderWidth: 1,
-  },
-  notificationVibeTitle: {
-    color: '#4C91FF',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  notificationVibeHint: {
-    color: '#888888',
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  notificationVibeSpinner: {
-    marginVertical: 16,
-  },
-  notificationVibeList: {
-    gap: 8,
-    marginBottom: 14,
-  },
-  notificationVibeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2B2B2B',
-    backgroundColor: '#1A1A1A',
-  },
-  notificationVibeRowSelected: {
-    borderColor: 'rgba(76, 145, 255, 0.55)',
-    backgroundColor: 'rgba(76, 145, 255, 0.1)',
-  },
-  notificationVibeRowText: {
-    flex: 1,
-    paddingRight: 8,
-  },
-  notificationVibeLabel: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  notificationVibeLabelSelected: {
-    color: '#E8F1FF',
-  },
-  notificationVibeSubtitle: {
-    color: '#999999',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  notificationVibeCheck: {
-    color: '#4C91FF',
-    fontSize: 16,
-    fontWeight: '700',
   },
   quickActionsSection: {
     marginBottom: 32,

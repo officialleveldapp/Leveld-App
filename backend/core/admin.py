@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Profile, Workout, Badge, UserBadge, Friendship,
+    Profile, Workout, Badge, UserBadge,
     Group, GroupMember, GroupInvite, Challenge, WorkoutFeed, FeedReaction, DailyTip,
     WorkoutLibraryTemplate,
     NotificationPersonalityPreset,
@@ -27,12 +27,6 @@ class BadgeAdmin(admin.ModelAdmin):
 @admin.register(UserBadge)
 class UserBadgeAdmin(admin.ModelAdmin):
     list_display = ('user', 'badge', 'earned_at')
-
-
-@admin.register(Friendship)
-class FriendshipAdmin(admin.ModelAdmin):
-    list_display = ('user', 'friend', 'status', 'created_at')
-    list_filter = ('status',)
 
 
 @admin.register(Group)

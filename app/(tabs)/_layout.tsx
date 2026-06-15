@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSession } from '@/contexts/SessionContext';
 import { GroupInvitesProvider, useGroupInvites } from '@/contexts/GroupInvitesContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TabTutorialOverlay } from '@/components/TabTutorialOverlay';
 function formatTime(secs: number) {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
@@ -22,7 +23,7 @@ function SessionBanner() {
   const onTrackTab =
     pathname === '/track' ||
     pathname?.startsWith('/track/') ||
-    segments.includes('track');
+    (segments as string[]).includes('track');
   if (!isActive || onTrackTab) return null;
 
   return (
@@ -189,15 +190,9 @@ function TabLayoutWithInvites({ insets }: { insets: { bottom: number } }) {
             headerShown: false,
           }}
         />
-        <Tabs.Screen
-          name="calendar-workout"
-          options={{
-            href: null,
-            headerShown: false,
-          }}
-        />
       </Tabs>
       </View>
+      <TabTutorialOverlay />
     </View>
   );
 }

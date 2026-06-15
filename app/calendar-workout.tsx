@@ -104,7 +104,13 @@ export default function CalendarWorkoutScreen() {
       >
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(tabs)/progress');
+              }
+            }}
             style={styles.backButton}
             activeOpacity={0.7}
             accessibilityRole="button"
