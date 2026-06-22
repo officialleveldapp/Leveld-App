@@ -170,20 +170,6 @@ function TabLayoutWithInvites({ insets }: { insets: { bottom: number } }) {
           }}
         />
         <Tabs.Screen
-          name="privacy"
-          options={{
-            href: null,
-            headerShown: false,
-          }}
-        />
-        <Tabs.Screen
-          name="help-support"
-          options={{
-            href: null,
-            headerShown: false,
-          }}
-        />
-        <Tabs.Screen
           name="calendar"
           options={{
             href: null,

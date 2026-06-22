@@ -64,11 +64,12 @@ class GoogleAuthSerializer(serializers.Serializer):
 class ProfileSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user_id', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
+    signed_in_with_google = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
-            'id', 'email', 'username', 'avatar_url', 'xp', 'level',
+            'id', 'email', 'username', 'signed_in_with_google', 'avatar_url', 'xp', 'level',
             'current_streak', 'longest_streak', 'total_workouts',
             'goal', 'experience_level', 'workout_frequency',
             'onboarding_completed',
@@ -79,10 +80,81 @@ class ProfileSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'email', 'xp', 'level', 'current_streak', 'longest_streak',
-            'total_workouts', 'last_workout_date', 'is_pro', 'pro_expires_at',
-            'created_at', 'updated_at',
+            'id', 'email', 'signed_in_with_google', 'xp', 'level', 'current_streak',
+            'longest_streak', 'total_workouts', 'last_workout_date', 'is_pro',
+            'pro_expires_at', 'created_at', 'updated_at',
         ]
+
+    def get_signed_in_with_google(self, obj):
+        return bool(obj.google_sub)
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """PATCH /api/profile/ — editable account + training basics."""
+
+    id = serializers.IntegerField(source='user_id', read_only=True)
+    email = serializers.EmailField(source='user.email', required=False)
+    signed_in_with_google = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Profile
+        fields = [
+            'id', 'email', 'username', 'signed_in_with_google',
+            'goal', 'experience_level', 'workout_frequency',
+            'body_weight_lbs', 'height_inches', 'starting_bench_lbs',
+            'training_environment', 'session_length_minutes',
+            'onboarding_completed',
+        ]
+        read_only_fields = ['id', 'signed_in_with_google']
+        extra_kwargs = {
+            'body_weight_lbs': {'required': False, 'allow_null': True},
+            'height_inches': {'required': False, 'allow_null': True},
+            'starting_bench_lbs': {'required': False, 'allow_null': True},
+            'session_length_minutes': {'required': False, 'allow_null': True},
+        }
+
+    def get_signed_in_with_google(self, obj):
+        return bool(obj.google_sub)
+
+    def validate_username(self, value):
+        value = (value or '').strip()
+        if len(value) < 2:
+            raise serializers.ValidationError('Username must be at least 2 characters.')
+        if len(value) > 150:
+            raise serializers.ValidationError('Username is too long.')
+        profile = self.instance
+        if Profile.objects.filter(username__iexact=value).exclude(pk=profile.pk).exists():
+            raise serializers.ValidationError('This username is already taken.')
+        return value
+
+    def validate_email(self, value):
+        profile = self.instance
+        if profile.google_sub:
+            raise serializers.ValidationError(
+                'Email is managed by your Google account and cannot be changed here.',
+            )
+        email = (value or '').strip().lower()
+        if not email:
+            raise serializers.ValidationError('Email is required.')
+        user = profile.user
+        if User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return email
+
+    def validate(self, attrs):
+        if self.instance and self.instance.google_sub and 'user' in attrs:
+            attrs.pop('user', None)
+        return super().validate(attrs)
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', None)
+        if user_data and 'email' in user_data and not instance.google_sub:
+            email = user_data['email']
+            user = instance.user
+            user.email = email
+            user.username = email
+            user.save(update_fields=['email', 'username'])
+        return super().update(instance, validated_data)
 
 
 class ProfilePublicSerializer(serializers.ModelSerializer):

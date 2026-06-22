@@ -1153,22 +1153,22 @@ function Footer() {
           </div>
           <div className="grid grid-cols-2 gap-10 sm:grid-cols-3">
             {[
-              ["Product", ["Features", "Pro", "Download"]],
-              ["Company", ["About", "Contact", "Press"]],
-              ["Legal", ["Terms", "Privacy", "Cookies"]],
+              ["Product", [["Features", "#features"], ["Pro", "#pro"], ["Download", "#"]]],
+              ["Company", [["About", "#"], ["Contact", `mailto:support@leveldai.com`], ["Press", "#"]]],
+              ["Legal", [["Terms", "/terms"], ["Privacy", "/privacy-policy"]]],
             ].map(([title, items]) => (
               <div key={title as string}>
                 <p className="text-[11px] uppercase tracking-[0.22em] text-[#555]">
                   {title as string}
                 </p>
                 <ul className="mt-4 space-y-2">
-                  {(items as string[]).map((it) => (
-                    <li key={it}>
+                  {(items as [string, string][]).map(([label, href]) => (
+                    <li key={label}>
                       <a
-                        href="#"
+                        href={href}
                         className="text-sm text-[#999] hover:text-white"
                       >
-                        {it}
+                        {label}
                       </a>
                     </li>
                   ))}

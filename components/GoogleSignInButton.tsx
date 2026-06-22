@@ -46,17 +46,13 @@ export function GoogleSignInButton({
 const styles = StyleSheet.create({
   button: {
     backgroundColor: '#FFFFFF',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 20,
-    borderRadius: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 56,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 5,
+    minHeight: 52,
+    width: '100%',
   },
   row: {
     flexDirection: 'row',

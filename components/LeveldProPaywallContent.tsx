@@ -32,14 +32,7 @@ const BENEFIT_LINES = [
   'Premium badges & early features',
 ];
 
-function legalUrl(kind: 'terms' | 'privacy'): string | undefined {
-  const key =
-    kind === 'terms'
-      ? process.env.EXPO_PUBLIC_LEGAL_TERMS_URL
-      : process.env.EXPO_PUBLIC_LEGAL_PRIVACY_URL;
-  const u = key?.trim();
-  return u || undefined;
-}
+import { legalUrl } from '@/lib/legalUrls';
 
 /** How long to wait for the RevenueCat SDK before showing a connection error. */
 const RC_READY_TIMEOUT_MS = 12000;
@@ -105,6 +98,8 @@ export function LeveldProPaywallContent({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [purchasing, setPurchasing] = useState(false);
+  const [showCongrats, setShowCongrats] = useState(false);
+  const [continuing, setContinuing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,7 +176,7 @@ export function LeveldProPaywallContent({
       const result = await rc.purchasePackage(selectedRow.pkg);
       if (result?.customerInfo && customerInfoHasLeveldPro(result.customerInfo)) {
         await refreshProfile();
-        await onProUnlocked();
+        setShowCongrats(true);
         return;
       }
       if (result?.customerInfo) {
@@ -219,10 +214,82 @@ export function LeveldProPaywallContent({
     }
   };
 
-  const openLegal = (kind: 'terms' | 'privacy') => {
-    const url = legalUrl(kind);
-    if (url) void Linking.openURL(url);
+  const handleContinue = async () => {
+    if (continuing) return;
+    setContinuing(true);
+    try {
+      await onProUnlocked();
+    } finally {
+      setContinuing(false);
+    }
   };
+
+  const openLegal = (kind: 'terms' | 'privacy') => {
+    void Linking.openURL(legalUrl(kind));
+  };
+
+  if (showCongrats) {
+    return (
+      <LinearGradient colors={['#0B0E14', '#050608']} style={styles.container}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.congratsContent,
+            {
+              paddingTop: Math.max(insets.top, 20) + 24,
+              paddingBottom: insets.bottom + 24,
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.congratsHero}>
+            <View style={styles.congratsIcon}>
+              <Crown color="#FFB547" size={44} />
+            </View>
+            <View style={styles.proBadge}>
+              <Crown color="#FFB547" size={16} />
+              <Text style={styles.proBadgeText}>PRO</Text>
+            </View>
+            <Text style={styles.congratsTitle}>You&rsquo;re Leveld Pro!</Text>
+            <Text style={styles.subtitle}>
+              Your subscription is active. Here&rsquo;s everything you just
+              unlocked.
+            </Text>
+          </View>
+
+          <View style={styles.benefitsBlock}>
+            {BENEFIT_LINES.map((line) => (
+              <View key={line} style={styles.benefitRow}>
+                <View style={styles.benefitCheck}>
+                  <Check color="#FFFFFF" size={12} strokeWidth={3} />
+                </View>
+                <Text style={styles.benefitLine}>{line}</Text>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            activeOpacity={0.9}
+            disabled={continuing}
+            onPress={() => void handleContinue()}
+            style={styles.ctaTouchable}
+          >
+            <LinearGradient
+              colors={['#4C91FF', '#2563EB']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.ctaGradient}
+            >
+              {continuing ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.ctaLabel}>Get Started</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        </ScrollView>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={['#0B0E14', '#050608']} style={styles.container}>
@@ -673,5 +740,33 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textAlign: 'center',
     lineHeight: 16,
+  },
+  congratsContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+  },
+  congratsHero: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  congratsIcon: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(255, 181, 71, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 181, 71, 0.3)',
+  },
+  congratsTitle: {
+    color: '#F8FAFC',
+    fontSize: 30,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 10,
+    letterSpacing: -0.4,
   },
 });

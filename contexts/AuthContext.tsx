@@ -36,6 +36,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * Pull a human-readable message out of any API error shape so the on-screen
+ * error reflects the real cause (network/timeout, bad credentials, server detail)
+ * instead of a generic fallback. Order: detail → field errors → message → string.
+ */
+function extractAuthErrorMessage(error: any, fallback: string): string {
+  if (!error) return fallback;
+  if (typeof error === 'string') return error;
+  const detail = (error as { detail?: string | string[] }).detail;
+  if (Array.isArray(detail) && detail[0]) return String(detail[0]);
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  const nonField = (error as { non_field_errors?: string[] }).non_field_errors;
+  if (Array.isArray(nonField) && nonField[0]) return String(nonField[0]);
+  // First field-level error (e.g. { email: ["..."] }).
+  for (const key of ['email', 'password', 'username', 'id_token']) {
+    const v = (error as Record<string, unknown>)[key];
+    if (Array.isArray(v) && v[0]) return String(v[0]);
+  }
+  const message = (error as { message?: string }).message;
+  if (typeof message === 'string' && message.trim()) return message;
+  return fallback;
+}
+
 async function clearLocalSession(): Promise<void> {
   await Promise.allSettled([
     clearTokens(),
@@ -164,7 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = async (email: string, password: string) => {
     const { data, error } = await apiLogin(email, password);
     if (error) {
-      throw new Error(error.detail || 'Failed to log in');
+      throw new Error(extractAuthErrorMessage(error, 'Failed to log in'));
     }
     if (data) {
       await clearPostOnboardingPaywallPending();
@@ -178,11 +201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async (idToken: string) => {
     const { data, error } = await apiGoogleSignIn(idToken);
     if (error) {
-      const msg =
-        error.detail ||
-        (typeof error === 'string' ? error : null) ||
-        'Google sign-in failed';
-      throw new Error(msg);
+      throw new Error(extractAuthErrorMessage(error, 'Google sign-in failed'));
     }
     if (data) {
       await clearPostOnboardingPaywallPending();

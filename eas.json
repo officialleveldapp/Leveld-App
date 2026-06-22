@@ -11,11 +11,36 @@
         "simulator": true
       }
     },
+    "development-device": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.leveldai.com/api",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "818975540922-a65p505ktfe6td71cc4890qe3l8iu1d2.apps.googleusercontent.com",
+        "EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY": "appl_QpdhJKSmGPTkREVEmKNcHyxZpUG",
+        "EXPO_PUBLIC_LEGAL_TERMS_URL": "https://leveldai.com/terms",
+        "EXPO_PUBLIC_LEGAL_PRIVACY_URL": "https://leveldai.com/privacy-policy"
+      }
+    },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.leveldai.com/api",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "818975540922-a65p505ktfe6td71cc4890qe3l8iu1d2.apps.googleusercontent.com",
+        "EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY": "appl_QpdhJKSmGPTkREVEmKNcHyxZpUG",
+        "EXPO_PUBLIC_LEGAL_TERMS_URL": "https://leveldai.com/terms",
+        "EXPO_PUBLIC_LEGAL_PRIVACY_URL": "https://leveldai.com/privacy-policy"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.leveldai.com/api",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "818975540922-a65p505ktfe6td71cc4890qe3l8iu1d2.apps.googleusercontent.com",
+        "EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY": "appl_QpdhJKSmGPTkREVEmKNcHyxZpUG",
+        "EXPO_PUBLIC_LEGAL_TERMS_URL": "https://leveldai.com/terms",
+        "EXPO_PUBLIC_LEGAL_PRIVACY_URL": "https://leveldai.com/privacy-policy"
+      }
     }
   },
   "submit": {

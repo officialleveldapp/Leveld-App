@@ -24,8 +24,6 @@ function isTabAppPath(pathname: string): boolean {
     '/progress',
     '/track',
     '/groups',
-    '/privacy',
-    '/help-support',
     '/calendar',
   ];
   return tabRoots.some((p) => pathname === p || pathname.startsWith(`${p}/`));
@@ -44,9 +42,11 @@ function isSignedOutOnProtectedRoute(
     pathname === '/workout-history' ||
     pathname === '/workout-detail' ||
     pathname === '/create-group' ||
+    pathname === '/create-workout' ||
     pathname === '/friends' ||
     pathname.startsWith('/user/') ||
     pathname === '/exercise-stats' ||
+    pathname === '/edit-profile' ||
     pathname === '/calendar-workout'
   ) {
     return true;
@@ -117,8 +117,15 @@ function RootStack() {
   }, [user, loading, pathname, segments]);
 
   return (
-    <View style={{ flex: 1 }}>
-      <Stack screenOptions={{ headerShown: false }}>
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#0A0A0A' },
+          animation: 'fade',
+          animationDuration: 150,
+        }}
+      >
         <Stack.Screen name="index" />
         <Stack.Screen name="+not-found" />
         <Stack.Screen name="auth/signup" />
@@ -130,10 +137,12 @@ function RootStack() {
         <Stack.Screen name="workout-history" />
         <Stack.Screen name="workout-detail" />
         <Stack.Screen name="create-group" />
+        <Stack.Screen name="create-workout" />
         <Stack.Screen name="friends" />
         <Stack.Screen name="user/[id]" />
         <Stack.Screen name="exercise-stats" />
         <Stack.Screen name="notification-settings" />
+        <Stack.Screen name="edit-profile" />
         <Stack.Screen name="calendar-workout" />
         <Stack.Screen name="(tabs)" />
       </Stack>

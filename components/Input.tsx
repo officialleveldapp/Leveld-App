@@ -14,6 +14,8 @@ interface InputProps extends TextInputProps {
   error?: string;
   isPassword?: boolean;
   containerStyle?: any;
+  leftIcon?: React.ReactNode;
+  tone?: 'default' | 'auth';
 }
 
 export function Input({
@@ -22,17 +24,27 @@ export function Input({
   isPassword,
   style,
   containerStyle,
+  leftIcon,
+  tone = 'default',
   ...props
 }: InputProps) {
   const [showPassword, setShowPassword] = useState(false);
+  const isAuth = tone === 'auth';
 
   return (
-    <View style={[styles.container, containerStyle || style]}>
-      {label && <Text style={styles.label}>{label}</Text>}
-      <View style={[styles.inputContainer, error && styles.inputError]}>
+    <View style={[styles.container, isAuth && styles.authContainer, containerStyle || style]}>
+      {label && <Text style={[styles.label, isAuth && styles.authLabel]}>{label}</Text>}
+      <View
+        style={[
+          styles.inputContainer,
+          isAuth && styles.authInputContainer,
+          error && styles.inputError,
+        ]}
+      >
+        {leftIcon ? <View style={styles.leftIcon}>{leftIcon}</View> : null}
         <TextInput
-          style={styles.input}
-          placeholderTextColor="#666666"
+          style={[styles.input, isAuth && styles.authInput, leftIcon ? styles.inputWithIcon : null]}
+          placeholderTextColor={isAuth ? '#777777' : '#666666'}
           secureTextEntry={isPassword && !showPassword}
           {...props}
         />
@@ -58,11 +70,19 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
   },
+  authContainer: {
+    marginBottom: 14,
+  },
   label: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 8,
+  },
+  authLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 6,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -72,8 +92,17 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#2A2A2A',
   },
+  authInputContainer: {
+    backgroundColor: '#262626',
+    borderRadius: 10,
+    borderWidth: 0,
+    minHeight: 48,
+  },
   inputError: {
     borderColor: '#FF4C4C',
+  },
+  leftIcon: {
+    paddingLeft: 14,
   },
   input: {
     flex: 1,
@@ -81,6 +110,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingVertical: 14,
     paddingHorizontal: 16,
+  },
+  authInput: {
+    fontSize: 15,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+  },
+  inputWithIcon: {
+    paddingLeft: 8,
   },
   eyeIcon: {
     paddingHorizontal: 12,

@@ -23,7 +23,7 @@ from .workout_integrity import MAX_WORKOUT_LIST
 from .serializers import (
     RegisterSerializer, LoginSerializer, ForgotPasswordSerializer,
     GoogleAuthSerializer,
-    ProfileSerializer, ProfilePublicSerializer,
+    ProfileSerializer, ProfileUpdateSerializer, ProfilePublicSerializer,
     NotificationPersonalityPresetSerializer,
     WorkoutSerializer, WorkoutCreateSerializer,
     BadgeSerializer, UserBadgeSerializer, DailyTipSerializer,
@@ -341,10 +341,12 @@ class ProfileView(APIView):
             profile = request.user.profile
         except Profile.DoesNotExist:
             return Response({'detail': 'Profile not found.'}, status=404)
-        serializer = ProfileSerializer(profile, data=request.data, partial=True)
+        serializer = ProfileUpdateSerializer(
+            profile, data=request.data, partial=True,
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        return Response(ProfileSerializer(profile).data)
 
 
 # ══════════════════════════════════════════════════════

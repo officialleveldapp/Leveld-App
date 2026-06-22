@@ -1,6 +1,7 @@
 export interface Profile {
   id: string;
   email?: string;
+  signed_in_with_google?: boolean;
   username: string;
   avatar_url?: string;
   xp: number;

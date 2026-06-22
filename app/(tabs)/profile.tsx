@@ -7,7 +7,9 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
+  Linking,
 } from 'react-native';
+import { legalUrl } from '@/lib/legalUrls';
 import { useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -166,7 +168,11 @@ export default function ProfileScreen() {
             <Text style={styles.title}>Profile</Text>
             <Text style={styles.subtitle}>Your progress at a glance</Text>
           </View>
-          <TouchableOpacity style={styles.settingsButton}>
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={() => router.push('/edit-profile')}
+            hitSlop={8}
+          >
             <Settings color="#999999" size={24} />
           </TouchableOpacity>
         </View>
@@ -414,7 +420,11 @@ export default function ProfileScreen() {
         <View style={styles.quickActionsSection}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActionsGrid}>
-            <TouchableOpacity style={styles.quickActionPill}>
+            <TouchableOpacity
+              style={styles.quickActionPill}
+              onPress={() => router.push('/edit-profile')}
+              activeOpacity={0.8}
+            >
               <Text style={styles.quickActionText}>Edit Profile</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -426,17 +436,17 @@ export default function ProfileScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickActionPill}
-              onPress={() => router.push('/(tabs)/privacy')}
+              onPress={() => void Linking.openURL(legalUrl('privacy'))}
               activeOpacity={0.8}
             >
               <Text style={styles.quickActionText}>Privacy</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickActionPill}
-              onPress={() => router.push('/(tabs)/help-support')}
+              onPress={() => void Linking.openURL(legalUrl('terms'))}
               activeOpacity={0.8}
             >
-              <Text style={styles.quickActionText}>Help & Support</Text>
+              <Text style={styles.quickActionText}>Terms</Text>
             </TouchableOpacity>
           </View>
         </View>

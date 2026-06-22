@@ -34,6 +34,7 @@
       "favicon": "./assets/images/logo.png"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
       "expo-font",
       "expo-web-browser",
@@ -68,6 +69,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "56eb6e5d-7905-4283-a0da-62486b7a68a8"
+      }
+    },
+    "owner": "rahbeabass"
   }
 }
