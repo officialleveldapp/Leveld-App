@@ -2,6 +2,7 @@ export interface Profile {
   id: string;
   email?: string;
   signed_in_with_google?: boolean;
+  signed_in_with_apple?: boolean;
   username: string;
   avatar_url?: string;
   xp: number;

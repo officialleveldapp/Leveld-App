@@ -12,6 +12,7 @@ urlpatterns = [
     path('auth/login/', views.LoginView.as_view(), name='login'),
     path('auth/logout/', views.LogoutView.as_view(), name='logout'),
     path('auth/google/', views.GoogleAuthView.as_view(), name='google_auth'),
+    path('auth/apple/', views.AppleAuthView.as_view(), name='apple_auth'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('auth/forgot-password/', views.ForgotPasswordView.as_view(), name='forgot_password'),
     path('auth/delete-account/', views.DeleteAccountView.as_view(), name='delete_account'),

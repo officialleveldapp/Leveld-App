@@ -30,6 +30,7 @@ class Profile(models.Model):
     preferred_exercises = models.JSONField(default=list, blank=True)
     last_workout_date = models.DateField(blank=True, null=True)
     google_sub = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    apple_sub = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_pro = models.BooleanField(default=False)
     pro_expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

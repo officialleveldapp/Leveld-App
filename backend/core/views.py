@@ -20,9 +20,10 @@ from .models import (
     NotificationPersonalityPreset,
 )
 from .workout_integrity import MAX_WORKOUT_LIST
+from .apple_auth import verify_apple_identity_token, apple_signin_client_ids
 from .serializers import (
     RegisterSerializer, LoginSerializer, ForgotPasswordSerializer,
-    GoogleAuthSerializer,
+    GoogleAuthSerializer, AppleAuthSerializer,
     ProfileSerializer, ProfileUpdateSerializer, ProfilePublicSerializer,
     NotificationPersonalityPresetSerializer,
     WorkoutSerializer, WorkoutCreateSerializer,
@@ -223,6 +224,119 @@ class GoogleAuthView(APIView):
                     if picture and not (profile.avatar_url or '').strip():
                         profile.avatar_url = picture
                     profile.save()
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id': user.id,
+                'email': user.email,
+            },
+            'profile': ProfileSerializer(profile).data,
+        })
+
+
+class AppleAuthView(APIView):
+    """POST /api/auth/apple/ — verify Apple identity token, return JWT like login."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = AppleAuthSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data['identity_token']
+        full_name = (serializer.validated_data.get('full_name') or '').strip()
+
+        if not apple_signin_client_ids():
+            return Response(
+                {'detail': 'Apple sign-in is not configured on the server.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            idinfo = verify_apple_identity_token(token)
+        except ValueError:
+            return Response(
+                {'detail': 'Invalid Apple token.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        sub = idinfo.get('sub')
+        if not sub:
+            return Response(
+                {'detail': 'Invalid Apple account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = (idinfo.get('email') or '').strip().lower()
+        email_verified = idinfo.get('email_verified')
+        if email and email_verified is False:
+            return Response(
+                {'detail': 'Email not verified with Apple.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            profile = Profile.objects.select_related('user').get(apple_sub=sub)
+            user = profile.user
+        except Profile.DoesNotExist:
+            user = None
+            if email:
+                try:
+                    user = User.objects.get(email=email)
+                except User.DoesNotExist:
+                    user = None
+
+            if user is None:
+                if not email:
+                    return Response(
+                        {
+                            'detail': (
+                                'Apple did not return an email for this account. '
+                                'Use Sign in with Apple again and share your email, '
+                                'or sign in with the email/password you used before.'
+                            ),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                user = User.objects.create_user(
+                    username=email,
+                    email=email,
+                    password=secrets.token_urlsafe(32),
+                )
+                user.set_unusable_password()
+                user.save()
+                display_name = full_name or _unique_username_from_email(email)
+                if Profile.objects.filter(username=display_name).exists():
+                    display_name = _unique_username_from_email(email)
+                Profile.objects.create(
+                    user=user,
+                    username=display_name[:150],
+                    xp=0,
+                    level=1,
+                    current_streak=0,
+                    longest_streak=0,
+                    total_workouts=0,
+                    apple_sub=sub,
+                )
+                profile = user.profile
+            else:
+                profile, created = Profile.objects.get_or_create(
+                    user=user,
+                    defaults={
+                        'username': _unique_username_from_email(user.email),
+                        'apple_sub': sub,
+                    },
+                )
+                if profile.apple_sub and profile.apple_sub != sub:
+                    return Response(
+                        {'detail': 'This email is linked to a different Apple account.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if not created:
+                    profile.apple_sub = sub
+                    profile.save(update_fields=['apple_sub'])
 
         refresh = RefreshToken.for_user(user)
         return Response({

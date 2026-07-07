@@ -11,6 +11,7 @@ import {
   apiLogin,
   apiRegister,
   apiGoogleSignIn,
+  apiAppleSignIn,
   apiGetProfile,
   apiLogout,
   apiDeleteAccount,
@@ -29,6 +30,7 @@ interface AuthContextType {
   signUp: (email: string, password: string, username: string) => Promise<any>;
   signIn: (email: string, password: string) => Promise<any>;
   signInWithGoogle: (idToken: string) => Promise<any>;
+  signInWithApple: (identityToken: string, fullName?: string) => Promise<any>;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -212,6 +214,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { data, error };
   };
 
+  const signInWithApple = async (identityToken: string, fullName?: string) => {
+    const { data, error } = await apiAppleSignIn(identityToken, fullName);
+    if (error) {
+      throw new Error(extractAuthErrorMessage(error, 'Apple sign-in failed'));
+    }
+    if (data) {
+      await clearPostOnboardingPaywallPending();
+      setUser(data.user);
+      const prof = data.profile as Profile;
+      setProfile({ ...prof, is_pro: Boolean(prof.is_pro) });
+    }
+    return { data, error };
+  };
+
   const signOut = async () => {
     try {
       await apiLogout();
@@ -280,6 +296,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         signIn,
         signInWithGoogle,
+        signInWithApple,
         signOut,
         deleteAccount,
         refreshProfile,

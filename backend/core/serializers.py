@@ -59,17 +59,23 @@ class GoogleAuthSerializer(serializers.Serializer):
     id_token = serializers.CharField()
 
 
+class AppleAuthSerializer(serializers.Serializer):
+    identity_token = serializers.CharField()
+    full_name = serializers.CharField(required=False, allow_blank=True)
+
+
 # ── Profile ───────────────────────────────────────────
 
 class ProfileSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user_id', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     signed_in_with_google = serializers.SerializerMethodField()
+    signed_in_with_apple = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
-            'id', 'email', 'username', 'signed_in_with_google', 'avatar_url', 'xp', 'level',
+            'id', 'email', 'username', 'signed_in_with_google', 'signed_in_with_apple', 'avatar_url', 'xp', 'level',
             'current_streak', 'longest_streak', 'total_workouts',
             'goal', 'experience_level', 'workout_frequency',
             'onboarding_completed',
@@ -88,6 +94,9 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_signed_in_with_google(self, obj):
         return bool(obj.google_sub)
 
+    def get_signed_in_with_apple(self, obj):
+        return bool(obj.apple_sub)
+
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """PATCH /api/profile/ — editable account + training basics."""
@@ -95,17 +104,18 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user_id', read_only=True)
     email = serializers.EmailField(source='user.email', required=False)
     signed_in_with_google = serializers.SerializerMethodField()
+    signed_in_with_apple = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
-            'id', 'email', 'username', 'signed_in_with_google',
+            'id', 'email', 'username', 'signed_in_with_google', 'signed_in_with_apple',
             'goal', 'experience_level', 'workout_frequency',
             'body_weight_lbs', 'height_inches', 'starting_bench_lbs',
             'training_environment', 'session_length_minutes',
             'onboarding_completed',
         ]
-        read_only_fields = ['id', 'signed_in_with_google']
+        read_only_fields = ['id', 'signed_in_with_google', 'signed_in_with_apple']
         extra_kwargs = {
             'body_weight_lbs': {'required': False, 'allow_null': True},
             'height_inches': {'required': False, 'allow_null': True},
@@ -115,6 +125,12 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     def get_signed_in_with_google(self, obj):
         return bool(obj.google_sub)
+
+    def get_signed_in_with_apple(self, obj):
+        return bool(obj.apple_sub)
+
+    def _oauth_linked(self, profile) -> bool:
+        return bool(profile.google_sub or profile.apple_sub)
 
     def validate_username(self, value):
         value = (value or '').strip()
@@ -129,9 +145,10 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         profile = self.instance
-        if profile.google_sub:
+        if self._oauth_linked(profile):
+            provider = 'Apple' if profile.apple_sub else 'Google'
             raise serializers.ValidationError(
-                'Email is managed by your Google account and cannot be changed here.',
+                f'Email is managed by your {provider} account and cannot be changed here.',
             )
         email = (value or '').strip().lower()
         if not email:
@@ -142,13 +159,13 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         return email
 
     def validate(self, attrs):
-        if self.instance and self.instance.google_sub and 'user' in attrs:
+        if self.instance and self._oauth_linked(self.instance) and 'user' in attrs:
             attrs.pop('user', None)
         return super().validate(attrs)
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', None)
-        if user_data and 'email' in user_data and not instance.google_sub:
+        if user_data and 'email' in user_data and not self._oauth_linked(instance):
             email = user_data['email']
             user = instance.user
             user.email = email

@@ -121,7 +121,14 @@ export default function EditProfileScreen() {
   const insets = useSafeAreaInsets();
   const { profile, refreshProfile } = useAuth();
 
-  const isGoogle = Boolean(profile?.signed_in_with_google);
+  const isOAuthLinked = Boolean(
+    profile?.signed_in_with_google || profile?.signed_in_with_apple,
+  );
+  const oauthProvider = profile?.signed_in_with_apple
+    ? 'Apple'
+    : profile?.signed_in_with_google
+      ? 'Google'
+      : null;
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -171,7 +178,7 @@ export default function EditProfileScreen() {
       setError('Display name must be at least 2 characters.');
       return;
     }
-    if (!isGoogle) {
+    if (!isOAuthLinked) {
       const trimmedEmail = email.trim();
       if (!trimmedEmail || !trimmedEmail.includes('@')) {
         setError('Enter a valid email address.');
@@ -192,7 +199,7 @@ export default function EditProfileScreen() {
         height_inches: parseOptionalInt(heightInches),
         starting_bench_lbs: parseOptionalInt(benchLbs),
       };
-      if (!isGoogle) {
+      if (!isOAuthLinked) {
         payload.email = email.trim().toLowerCase();
       }
 
@@ -264,14 +271,14 @@ export default function EditProfileScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
-              editable={!isGoogle}
-              style={isGoogle ? styles.lockedInput : undefined}
+              editable={!isOAuthLinked}
+              style={isOAuthLinked ? styles.lockedInput : undefined}
             />
-            {isGoogle ? (
+            {isOAuthLinked ? (
               <View style={styles.lockedHint}>
                 <Lock color="#64748B" size={14} />
                 <Text style={styles.lockedHintText}>
-                  Signed in with Google — email is managed by your Google account.
+                  Signed in with {oauthProvider} — email is managed by your {oauthProvider} account.
                 </Text>
               </View>
             ) : null}

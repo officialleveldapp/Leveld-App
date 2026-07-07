@@ -224,6 +224,24 @@ export async function apiGoogleSignIn(
   return result;
 }
 
+export async function apiAppleSignIn(
+  identityToken: string,
+  fullName?: string,
+): Promise<{ data: AuthResponse | null; error: any }> {
+  const result = await apiFetch<AuthResponse>('/auth/apple/', {
+    method: 'POST',
+    body: {
+      identity_token: identityToken,
+      ...(fullName ? { full_name: fullName } : {}),
+    },
+    noAuth: true,
+  });
+  if (result.data) {
+    await setTokens(result.data.access, result.data.refresh);
+  }
+  return result;
+}
+
 export async function apiForgotPassword(
   email: string,
 ): Promise<{ data: any; error: any }> {

@@ -48,6 +48,25 @@ function planPriceString(row: ProPlanRow): string {
   return row.tier === 'annual' ? paywallPriceCopy.yearly : paywallPriceCopy.monthly;
 }
 
+/** App Store product title, e.g. "Leveld Pro Monthly". */
+function subscriptionTitle(row: ProPlanRow): string {
+  const storeTitle = row.pkg.product.title?.trim();
+  if (storeTitle) return storeTitle;
+  return row.tier === 'annual' ? 'Leveld Pro (Annual)' : 'Leveld Pro (Monthly)';
+}
+
+function subscriptionLengthLabel(tier: ProPlanRow['tier']): string {
+  return tier === 'annual' ? '1 year' : '1 month';
+}
+
+function subscriptionPriceLine(row: ProPlanRow): string {
+  const price = planPriceString(row);
+  if (row.tier === 'annual') {
+    return `${price}/year (${annualPerMonthString(row)}/month)`;
+  }
+  return `${price}/month`;
+}
+
 /** Per-month equivalent of an annual plan, in the product's own currency. */
 function annualPerMonthString(row: ProPlanRow): string {
   const product = row.pkg.product;
@@ -391,16 +410,14 @@ export function LeveldProPaywallContent({
                       </View>
                       <View style={styles.planCopy}>
                         <Text style={styles.planName}>
-                          {isAnnual ? 'Yearly' : 'Monthly'}
+                          {subscriptionTitle(row)}
                         </Text>
-                        <Text style={styles.planSubtitle} numberOfLines={1}>
-                          {subtitle}
+                        <Text style={styles.planSubtitle} numberOfLines={2}>
+                          {subscriptionLengthLabel(tier)} · {subtitle}
                         </Text>
                       </View>
-                      <Text style={styles.planPrice} numberOfLines={1}>
-                        {isAnnual
-                          ? `${planPriceString(row)}/yr`
-                          : `${planPriceString(row)}/mo`}
+                      <Text style={styles.planPrice} numberOfLines={2}>
+                        {subscriptionPriceLine(row)}
                       </Text>
                     </View>
                   </Pressable>
@@ -408,6 +425,26 @@ export function LeveldProPaywallContent({
               })}
             </View>
           )}
+
+          {selectedRow && !loading && !loadError ? (
+            <View style={styles.subscriptionSummary}>
+              <Text style={styles.subscriptionSummaryTitle}>
+                Auto-renewable subscription
+              </Text>
+              <Text style={styles.subscriptionSummaryLine}>
+                <Text style={styles.subscriptionSummaryLabel}>Title: </Text>
+                {subscriptionTitle(selectedRow)}
+              </Text>
+              <Text style={styles.subscriptionSummaryLine}>
+                <Text style={styles.subscriptionSummaryLabel}>Length: </Text>
+                {subscriptionLengthLabel(selectedRow.tier)}
+              </Text>
+              <Text style={styles.subscriptionSummaryLine}>
+                <Text style={styles.subscriptionSummaryLabel}>Price: </Text>
+                {subscriptionPriceLine(selectedRow)}
+              </Text>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             activeOpacity={0.9}
@@ -460,7 +497,7 @@ export function LeveldProPaywallContent({
               onPress={() => openLegal('terms')}
               hitSlop={{ top: 8, bottom: 8 }}
             >
-              <Text style={styles.footerLink}>Terms</Text>
+              <Text style={styles.footerLink}>Terms of Use (EULA)</Text>
             </TouchableOpacity>
             <Text style={styles.footerDot}>&middot;</Text>
             <TouchableOpacity
@@ -474,7 +511,16 @@ export function LeveldProPaywallContent({
           <Text style={styles.disclaimer}>
             Payment is charged to your Apple ID account at confirmation.
             Subscription auto-renews unless cancelled at least 24 hours
-            before the current period ends.
+            before the current period ends. Manage or cancel in Apple ID
+            Account Settings. By subscribing you agree to our{' '}
+            <Text style={styles.disclaimerLink} onPress={() => openLegal('terms')}>
+              Terms of Use (EULA)
+            </Text>
+            {' and '}
+            <Text style={styles.disclaimerLink} onPress={() => openLegal('privacy')}>
+              Privacy Policy
+            </Text>
+            .
           </Text>
         </View>
       </ScrollView>
@@ -596,6 +642,33 @@ const styles = StyleSheet.create({
   planList: {
     gap: 10,
     marginBottom: 16,
+  },
+  subscriptionSummary: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#252D3A',
+    backgroundColor: '#10141C',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+    gap: 4,
+  },
+  subscriptionSummaryTitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  subscriptionSummaryLine: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  subscriptionSummaryLabel: {
+    color: '#94A3B8',
+    fontWeight: '600',
   },
   planCard: {
     borderRadius: 14,
@@ -740,6 +813,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textAlign: 'center',
     lineHeight: 16,
+  },
+  disclaimerLink: {
+    color: '#64748B',
+    textDecorationLine: 'underline',
   },
   congratsContent: {
     flexGrow: 1,

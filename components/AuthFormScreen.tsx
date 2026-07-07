@@ -13,12 +13,14 @@ import {
 import { useRouter } from 'expo-router';
 import { Mail, Lock, User } from 'lucide-react-native';
 import { AuthScreenLayout, type AuthMode } from '@/components/AuthScreenLayout';
+import { AppleSignInButton } from '@/components/AppleSignInButton';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { Input } from '@/components/Input';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Profile } from '@/types/database';
 import { profileNeedsOnboarding } from '@/lib/postRegisterFlow';
 import { useGoogleIdToken } from '@/hooks/useGoogleIdToken';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { replaceWithPendingGroupInviteIfAny } from '@/lib/pendingGroupInviteNavigation';
 import { legalUrl } from '@/lib/legalUrls';
 
@@ -31,7 +33,7 @@ type AuthFormScreenProps = {
 
 export function AuthFormScreen({ initialMode }: AuthFormScreenProps) {
   const router = useRouter();
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
   const { request, response, promptAsync, configured, googleSetupHint } =
     useGoogleIdToken();
 
@@ -91,6 +93,46 @@ export function AuthFormScreen({ initialMode }: AuthFormScreenProps) {
       setError('Google sign-in was cancelled or failed');
     }
   }, [response]);
+
+  const handleAppleSignIn = async () => {
+    if (Platform.OS !== 'ios') return;
+    const available = await AppleAuthentication.isAvailableAsync();
+    if (!available) {
+      setError('Sign in with Apple is not available on this device.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        throw new Error('Apple sign-in failed');
+      }
+      const fullName = [
+        credential.fullName?.givenName,
+        credential.fullName?.familyName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const { data } = await signInWithApple(
+        credential.identityToken,
+        fullName || undefined,
+      );
+      await navigateAfterAuth(data?.profile as Profile | undefined);
+    } catch (err: any) {
+      if (err?.code === 'ERR_REQUEST_CANCELED') return;
+      setError(err.message || 'Apple sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     setError('');
@@ -169,6 +211,14 @@ export function AuthFormScreen({ initialMode }: AuthFormScreenProps) {
         <Text style={styles.hintText}>{googleSetupHint}</Text>
       ) : null}
 
+      {Platform.OS === 'ios' ? (
+        <AppleSignInButton
+          onPress={() => void handleAppleSignIn()}
+          disabled={loading}
+          style={styles.appleBtn}
+        />
+      ) : null}
+
       {configured ? (
         <GoogleSignInButton
           onPress={() => promptAsync()}
@@ -179,7 +229,7 @@ export function AuthFormScreen({ initialMode }: AuthFormScreenProps) {
         />
       ) : null}
 
-      {configured ? (
+      {Platform.OS === 'ios' || configured ? (
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
           <Text style={styles.dividerText}>or</Text>
@@ -253,6 +303,10 @@ export function AuthFormScreen({ initialMode }: AuthFormScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  appleBtn: {
+    marginTop: 0,
+    marginBottom: 12,
+  },
   googleBtn: {
     marginTop: 0,
     borderRadius: 10,
