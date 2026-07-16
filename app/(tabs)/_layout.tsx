@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Tabs, usePathname, useRouter, useSegments } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Home, BarChart3, Plus, Users, User, Timer, Zap } from 'lucide-react-native';
+import { Home, BarChart3, Plus, Users, User, Timer, Zap, Crown } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSession } from '@/contexts/SessionContext';
 import { GroupInvitesProvider, useGroupInvites } from '@/contexts/GroupInvitesContext';
@@ -143,12 +143,28 @@ function TabLayoutWithInvites({ insets }: { insets: { bottom: number } }) {
             tabBarIcon: ({ size, color }) => (
               <View style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
                 <Users size={size} color={color} />
+                {/* Premium feature marker */}
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -3,
+                    right: -4,
+                    width: 13,
+                    height: 13,
+                    borderRadius: 7,
+                    backgroundColor: '#1E1E1E',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Crown size={9} color="#FFB547" fill="#FFB547" />
+                </View>
                 {pendingCount > 0 ? (
                   <View
                     style={{
                       position: 'absolute',
                       top: -1,
-                      right: -2,
+                      left: -2,
                       width: 9,
                       height: 9,
                       borderRadius: 5,

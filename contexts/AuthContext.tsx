@@ -19,7 +19,7 @@ import {
   hasSession,
 } from '@/lib/api';
 import { clearPersistedWorkoutSession } from '@/lib/workoutSessionStorage';
-import { clearPostOnboardingPaywallPending } from '@/lib/postRegisterFlow';
+import { clearPostOnboardingPaywallPending, clearPostOnboardingNotificationsPending } from '@/lib/postRegisterFlow';
 import { resetAfterSignOut, resetToWelcome } from '@/lib/resetToWelcome';
 import { clearAllGroupInviteState } from '@/lib/groupInviteStorage';
 
@@ -66,6 +66,7 @@ async function clearLocalSession(): Promise<void> {
     clearTokens(),
     clearPersistedWorkoutSession(),
     clearPostOnboardingPaywallPending(),
+    clearPostOnboardingNotificationsPending(),
     clearAllGroupInviteState(),
   ]);
 }
@@ -179,6 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (data) {
       await clearPostOnboardingPaywallPending();
+      await clearPostOnboardingNotificationsPending();
       setUser(data.user);
       const prof = data.profile as Profile;
       setProfile({ ...prof, is_pro: Boolean(prof.is_pro) });
@@ -193,6 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (data) {
       await clearPostOnboardingPaywallPending();
+      await clearPostOnboardingNotificationsPending();
       setUser(data.user);
       const prof = data.profile as Profile;
       setProfile({ ...prof, is_pro: Boolean(prof.is_pro) });
@@ -207,6 +210,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (data) {
       await clearPostOnboardingPaywallPending();
+      await clearPostOnboardingNotificationsPending();
       setUser(data.user);
       const prof = data.profile as Profile;
       setProfile({ ...prof, is_pro: Boolean(prof.is_pro) });
@@ -221,6 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (data) {
       await clearPostOnboardingPaywallPending();
+      await clearPostOnboardingNotificationsPending();
       setUser(data.user);
       const prof = data.profile as Profile;
       setProfile({ ...prof, is_pro: Boolean(prof.is_pro) });

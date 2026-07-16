@@ -289,6 +289,26 @@ export default function ProfileScreen() {
           </Card>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={() => router.push('/notification-settings')}
+          accessibilityRole="button"
+          accessibilityLabel="Notification settings"
+        >
+          <Card style={styles.exerciseTotalsCtaCard}>
+            <View style={styles.exerciseTotalsIcon}>
+              <Bell color="#4C91FF" size={22} />
+            </View>
+            <View style={styles.exerciseTotalsMid}>
+              <Text style={styles.exerciseTotalsTitle}>Notifications</Text>
+              <Text style={styles.exerciseTotalsSub}>
+                Choose which daily reminders you get, their times, and the vibe
+              </Text>
+            </View>
+            <ChevronRight color="#64748B" size={22} />
+          </Card>
+        </TouchableOpacity>
+
         <Card style={styles.snapshotCard}>
           <View style={styles.snapshotHeader}>
             <Text style={styles.cardTitle}>Momentum Snapshot</Text>
@@ -397,26 +417,6 @@ export default function ProfileScreen() {
           ) : null}
         </Card>
 
-        <TouchableOpacity
-          activeOpacity={0.88}
-          onPress={() => router.push('/notification-settings')}
-          accessibilityRole="button"
-          accessibilityLabel="Notification settings"
-        >
-          <Card style={styles.exerciseTotalsCtaCard}>
-            <View style={styles.exerciseTotalsIcon}>
-              <Bell color="#4C91FF" size={22} />
-            </View>
-            <View style={styles.exerciseTotalsMid}>
-              <Text style={styles.exerciseTotalsTitle}>Notifications</Text>
-              <Text style={styles.exerciseTotalsSub}>
-                Choose which daily reminders you get, their times, and the vibe
-              </Text>
-            </View>
-            <ChevronRight color="#64748B" size={22} />
-          </Card>
-        </TouchableOpacity>
-
         <View style={styles.quickActionsSection}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActionsGrid}>
@@ -426,13 +426,6 @@ export default function ProfileScreen() {
               activeOpacity={0.8}
             >
               <Text style={styles.quickActionText}>Edit Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.quickActionPill}
-              onPress={() => router.push('/notification-settings')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.quickActionText}>Notifications</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickActionPill}

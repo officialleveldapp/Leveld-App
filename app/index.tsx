@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   profileNeedsOnboarding,
   isPostOnboardingPaywallPending,
+  isPostOnboardingNotificationsPending,
 } from '@/lib/postRegisterFlow';
 import { Dumbbell, Flame, Users } from 'lucide-react-native';
 import { getWelcomeLogoLayout } from '@/lib/welcomeLogoLayout';
@@ -81,6 +82,10 @@ export default function WelcomeScreen() {
             params: { source: 'onboarding' },
           });
         }
+        return;
+      }
+      if (await isPostOnboardingNotificationsPending()) {
+        if (!cancelled) router.replace('/enable-notifications');
         return;
       }
       if (!cancelled) router.replace('/(tabs)');

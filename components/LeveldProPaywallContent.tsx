@@ -67,6 +67,16 @@ function subscriptionPriceLine(row: ProPlanRow): string {
   return `${price}/month`;
 }
 
+/** Short price for the plan card, e.g. "$29.99/yr" or "$6.99/mo". */
+function shortPriceString(row: ProPlanRow): string {
+  return `${planPriceString(row)}/${row.tier === 'annual' ? 'yr' : 'mo'}`;
+}
+
+/** Short display name for the plan card; the full store title lives in the disclosure line. */
+function planDisplayName(tier: ProPlanRow['tier']): string {
+  return tier === 'annual' ? 'Yearly' : 'Monthly';
+}
+
 /** Per-month equivalent of an annual plan, in the product's own currency. */
 function annualPerMonthString(row: ProPlanRow): string {
   const product = row.pkg.product;
@@ -334,15 +344,12 @@ export function LeveldProPaywallContent({
         bounces
       >
         <View style={styles.heroSection}>
-          <AppLogo size={140} containerStyle={styles.heroLogo} />
+          <AppLogo size={96} containerStyle={styles.heroLogo} />
           <View style={styles.proBadge}>
             <Crown color="#FFB547" size={16} />
             <Text style={styles.proBadgeText}>PRO</Text>
           </View>
           <Text style={styles.title}>Unlock Your Full Potential</Text>
-          <Text style={styles.subtitle}>
-            Get unlimited access to every feature in Leveld
-          </Text>
         </View>
 
         <View style={styles.benefitsBlock}>
@@ -399,25 +406,23 @@ export function LeveldProPaywallContent({
                         </Text>
                       </View>
                     ) : null}
-                    {isAnnual ? (
-                      <View style={styles.bestValuePill}>
-                        <Text style={styles.bestValueText}>Best Value</Text>
-                      </View>
-                    ) : null}
                     <View style={styles.planCardInner}>
                       <View style={[styles.planRadio, active && styles.planRadioOn]}>
                         {active ? <View style={styles.planRadioDot} /> : null}
                       </View>
                       <View style={styles.planCopy}>
-                        <Text style={styles.planName}>
-                          {subscriptionTitle(row)}
+                        <Text style={styles.planName} numberOfLines={1}>
+                          {planDisplayName(tier)}
+                          {isAnnual ? (
+                            <Text style={styles.planNameTag}>  ·  Best Value</Text>
+                          ) : null}
                         </Text>
-                        <Text style={styles.planSubtitle} numberOfLines={2}>
-                          {subscriptionLengthLabel(tier)} · {subtitle}
+                        <Text style={styles.planSubtitle} numberOfLines={1}>
+                          {subtitle}
                         </Text>
                       </View>
-                      <Text style={styles.planPrice} numberOfLines={2}>
-                        {subscriptionPriceLine(row)}
+                      <Text style={styles.planPrice} numberOfLines={1}>
+                        {shortPriceString(row)}
                       </Text>
                     </View>
                   </Pressable>
@@ -427,23 +432,11 @@ export function LeveldProPaywallContent({
           )}
 
           {selectedRow && !loading && !loadError ? (
-            <View style={styles.subscriptionSummary}>
-              <Text style={styles.subscriptionSummaryTitle}>
-                Auto-renewable subscription
-              </Text>
-              <Text style={styles.subscriptionSummaryLine}>
-                <Text style={styles.subscriptionSummaryLabel}>Title: </Text>
-                {subscriptionTitle(selectedRow)}
-              </Text>
-              <Text style={styles.subscriptionSummaryLine}>
-                <Text style={styles.subscriptionSummaryLabel}>Length: </Text>
-                {subscriptionLengthLabel(selectedRow.tier)}
-              </Text>
-              <Text style={styles.subscriptionSummaryLine}>
-                <Text style={styles.subscriptionSummaryLabel}>Price: </Text>
-                {subscriptionPriceLine(selectedRow)}
-              </Text>
-            </View>
+            <Text style={styles.subscriptionDisclosure}>
+              {subscriptionTitle(selectedRow)} · auto-renews every{' '}
+              {subscriptionLengthLabel(selectedRow.tier)} at{' '}
+              {subscriptionPriceLine(selectedRow)}
+            </Text>
           ) : null}
 
           <TouchableOpacity
@@ -509,18 +502,10 @@ export function LeveldProPaywallContent({
           </View>
 
           <Text style={styles.disclaimer}>
-            Payment is charged to your Apple ID account at confirmation.
-            Subscription auto-renews unless cancelled at least 24 hours
-            before the current period ends. Manage or cancel in Apple ID
-            Account Settings. By subscribing you agree to our{' '}
-            <Text style={styles.disclaimerLink} onPress={() => openLegal('terms')}>
-              Terms of Use (EULA)
-            </Text>
-            {' and '}
-            <Text style={styles.disclaimerLink} onPress={() => openLegal('privacy')}>
-              Privacy Policy
-            </Text>
-            .
+            Payment is charged to your Apple ID at confirmation. Auto-renews
+            unless cancelled at least 24 hours before the period ends; manage
+            in Apple ID Settings. By subscribing you agree to the Terms and
+            Privacy Policy above.
           </Text>
         </View>
       </ScrollView>
@@ -543,10 +528,10 @@ const styles = StyleSheet.create({
   },
   heroSection: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 20,
   },
   heroLogo: {
-    marginBottom: 20,
+    marginBottom: 14,
   },
   proBadge: {
     flexDirection: 'row',
@@ -643,32 +628,13 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 16,
   },
-  subscriptionSummary: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#252D3A',
-    backgroundColor: '#10141C',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 16,
-    gap: 4,
-  },
-  subscriptionSummaryTitle: {
+  subscriptionDisclosure: {
     color: '#94A3B8',
     fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 4,
-  },
-  subscriptionSummaryLine: {
-    color: '#E2E8F0',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  subscriptionSummaryLabel: {
-    color: '#94A3B8',
-    fontWeight: '600',
+    lineHeight: 17,
+    textAlign: 'center',
+    marginBottom: 14,
+    paddingHorizontal: 8,
   },
   planCard: {
     borderRadius: 14,
@@ -695,21 +661,6 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   savePillText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  bestValuePill: {
-    position: 'absolute',
-    top: -10,
-    left: 12,
-    backgroundColor: '#059669',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    zIndex: 2,
-  },
-  bestValueText: {
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '800',
@@ -747,6 +698,11 @@ const styles = StyleSheet.create({
     color: '#F8FAFC',
     fontSize: 16,
     fontWeight: '800',
+  },
+  planNameTag: {
+    color: '#34D399',
+    fontSize: 12,
+    fontWeight: '700',
   },
   planSubtitle: {
     color: '#94A3B8',
@@ -813,10 +769,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     textAlign: 'center',
     lineHeight: 16,
-  },
-  disclaimerLink: {
-    color: '#64748B',
-    textDecorationLine: 'underline',
   },
   congratsContent: {
     flexGrow: 1,

@@ -1,7 +1,10 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LeveldProPaywallContent } from '@/components/LeveldProPaywallContent';
-import { clearPostOnboardingPaywallPending } from '@/lib/postRegisterFlow';
+import {
+  clearPostOnboardingPaywallPending,
+  markPostOnboardingNotificationsPending,
+} from '@/lib/postRegisterFlow';
 import { replaceWithPendingGroupInviteIfAny } from '@/lib/pendingGroupInviteNavigation';
 import {
   usePaywallGateRefs,
@@ -22,6 +25,11 @@ export default function PaywallScreen() {
     paywallOpenedFromInAppGateRef.current = false;
   }, [paywallOpenedFromInAppGateRef]);
 
+  const goToNotificationsStep = async () => {
+    await markPostOnboardingNotificationsPending();
+    router.replace('/enable-notifications');
+  };
+
   const navigateAway = async () => {
     pendingPurchaseCallbackRef.current = undefined;
     await clearPostOnboardingPaywallPending();
@@ -33,7 +41,7 @@ export default function PaywallScreen() {
     }
 
     if (isPostOnboardingFirst) {
-      router.replace('/(tabs)');
+      await goToNotificationsStep();
       return;
     }
 
@@ -59,7 +67,7 @@ export default function PaywallScreen() {
     cb?.();
 
     if (isPostOnboardingFirst) {
-      router.replace('/(tabs)');
+      await goToNotificationsStep();
       return;
     }
 
@@ -81,7 +89,7 @@ export default function PaywallScreen() {
     }
 
     if (isPostOnboardingFirst) {
-      router.replace('/(tabs)');
+      await goToNotificationsStep();
       return;
     }
 

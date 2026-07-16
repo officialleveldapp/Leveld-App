@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { Profile } from '@/types/database';
 
 const PAYWALL_PENDING = 'leveld_post_onboarding_paywall_pending';
+const NOTIFICATIONS_PENDING = 'leveld_post_onboarding_notifications_pending';
 
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === 'web') {
@@ -48,4 +49,17 @@ export async function isPostOnboardingPaywallPending(): Promise<boolean> {
 
 export async function clearPostOnboardingPaywallPending(): Promise<void> {
   await storageRemove(PAYWALL_PENDING);
+}
+
+/** Set after paywall so the enable-notifications step survives an app kill. */
+export async function markPostOnboardingNotificationsPending(): Promise<void> {
+  await storageSet(NOTIFICATIONS_PENDING, '1');
+}
+
+export async function isPostOnboardingNotificationsPending(): Promise<boolean> {
+  return (await storageGet(NOTIFICATIONS_PENDING)) === '1';
+}
+
+export async function clearPostOnboardingNotificationsPending(): Promise<void> {
+  await storageRemove(NOTIFICATIONS_PENDING);
 }

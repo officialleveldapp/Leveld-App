@@ -10,6 +10,10 @@ import { RevenueCatProvider } from '@/contexts/RevenueCatContext';
 import { PaywallProvider } from '@/contexts/PaywallContext';
 import { PremiumGateProvider } from '@/contexts/PremiumGateContext';
 import { SessionProvider } from '@/contexts/SessionContext';
+import {
+  isPostOnboardingPaywallPending,
+  isPostOnboardingNotificationsPending,
+} from '@/lib/postRegisterFlow';
 import { scheduleDailyNotifications, cancelDailyNotifications } from '@/lib/notifications';
 
 /**
@@ -38,6 +42,8 @@ function isSignedOutOnProtectedRoute(
     pathname.startsWith('/onboarding/') ||
     pathname === '/paywall' ||
     pathname.startsWith('/paywall/') ||
+    pathname === '/enable-notifications' ||
+    pathname.startsWith('/enable-notifications/') ||
     pathname === '/workout-complete' ||
     pathname === '/workout-history' ||
     pathname === '/workout-detail' ||
@@ -77,16 +83,30 @@ function isSignedOutSafeLanding(
   return isSignedOutWelcomeLanding(pathname, segments);
 }
 
-/** Schedule daily notifications when signed in; cancel when signed out. */
+/** Schedule daily notifications when signed in; cancel when signed out.
+ *  Skip during onboarding paywall / notifications steps so the OS prompt
+ *  only appears on the dedicated enable-notifications screen. */
 function NotificationScheduler() {
   const { user } = useAuth();
 
   useEffect(() => {
-    if (user) {
-      void scheduleDailyNotifications();
-    } else {
+    if (!user) {
       void cancelDailyNotifications();
+      return;
     }
+    let cancelled = false;
+    (async () => {
+      if (
+        (await isPostOnboardingPaywallPending()) ||
+        (await isPostOnboardingNotificationsPending())
+      ) {
+        return;
+      }
+      if (!cancelled) void scheduleDailyNotifications();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   return null;
@@ -133,6 +153,7 @@ function RootStack() {
         <Stack.Screen name="auth/forgot-password" />
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="paywall" />
+        <Stack.Screen name="enable-notifications" options={{ gestureEnabled: false }} />
         <Stack.Screen name="workout-complete" options={{ gestureEnabled: false }} />
         <Stack.Screen name="workout-history" />
         <Stack.Screen name="workout-detail" />
