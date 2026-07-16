@@ -1,6 +1,8 @@
 import os
 import re
 import secrets
+from datetime import datetime, timezone as datetime_timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib.auth.models import User
 from django.db.models import Q, Max
@@ -17,7 +19,7 @@ from .models import (
     Group, GroupMember, GroupInvite, Challenge, ChallengeParticipant,
     WorkoutFeed, FeedReaction, DailyTip,
     WorkoutTemplate, TemplateExercise, WorkoutLibraryTemplate, PersonalRecord,
-    NotificationPersonalityPreset,
+    NotificationPersonalityPreset, RevenueEvent, ExerciseStat,
 )
 from .workout_integrity import MAX_WORKOUT_LIST
 from .apple_auth import verify_apple_identity_token, apple_signin_client_ids
@@ -360,6 +362,23 @@ class RevenueCatWebhookView(APIView):
     authentication_classes = []
     throttle_classes = []  # RevenueCat may burst; do not apply anon/user throttles
 
+    @staticmethod
+    def _decimal(value, default=Decimal('0')):
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _datetime_from_ms(value):
+        try:
+            return datetime.fromtimestamp(
+                int(value) / 1000,
+                tz=datetime_timezone.utc,
+            )
+        except (TypeError, ValueError, OSError, OverflowError):
+            return None
+
     def post(self, request):
         secret = os.getenv('REVENUECAT_WEBHOOK_SECRET', '').strip()
         auth = request.headers.get('Authorization', '')
@@ -370,18 +389,13 @@ class RevenueCatWebhookView(APIView):
         event = body.get('event') or body
         etype = (event.get('type') or event.get('event_type') or '').upper()
         app_user_id = event.get('app_user_id')
-        if app_user_id is None:
-            return Response({'ok': True})
-
+        profile = None
         try:
             pk = int(str(app_user_id).strip())
         except (TypeError, ValueError):
-            return Response({'ok': True})
-
-        try:
-            profile = Profile.objects.get(pk=pk)
-        except Profile.DoesNotExist:
-            return Response({'ok': True})
+            pk = None
+        if pk is not None:
+            profile = Profile.objects.filter(pk=pk).first()
 
         grant_pro = etype in (
             'INITIAL_PURCHASE',
@@ -397,14 +411,72 @@ class RevenueCatWebhookView(APIView):
             'SUBSCRIPTION_PAUSED',
         )
 
-        if grant_pro:
+        expires_at = self._datetime_from_ms(event.get('expiration_at_ms'))
+        if grant_pro and profile is not None:
             profile.is_pro = True
-            profile.pro_expires_at = None
-            profile.save()
-        elif revoke_pro:
+            profile.pro_expires_at = expires_at
+            profile.save(update_fields=['is_pro', 'pro_expires_at', 'updated_at'])
+        elif revoke_pro and profile is not None:
             profile.is_pro = False
             profile.pro_expires_at = None
-            profile.save()
+            profile.save(update_fields=['is_pro', 'pro_expires_at', 'updated_at'])
+
+        monetary_types = ('INITIAL_PURCHASE', 'RENEWAL', 'NON_RENEWING_PURCHASE', 'REFUND')
+        if etype in monetary_types:
+            purchased_at = self._datetime_from_ms(event.get('purchased_at_ms'))
+            if purchased_at is None:
+                purchased_at = datetime.now(tz=datetime_timezone.utc)
+
+            transaction_id = str(event.get('transaction_id') or '')
+            event_id = str(
+                event.get('id')
+                or f'{etype}:{transaction_id}:{event.get("purchased_at_ms") or ""}'
+            )
+
+            gross_usd = self._decimal(event.get('price'))
+            gross_local = self._decimal(
+                event.get('price_in_purchased_currency'),
+                default=gross_usd,
+            )
+            if etype == 'REFUND':
+                gross_usd = -abs(gross_usd)
+                gross_local = -abs(gross_local)
+
+            commission = self._decimal(event.get('commission_percentage'))
+            tax = self._decimal(event.get('tax_percentage'))
+            deductions = min(max(commission + tax, Decimal('0')), Decimal('1'))
+            proceeds = gross_usd * (Decimal('1') - deductions)
+            cents = Decimal('0.01')
+
+            RevenueEvent.objects.update_or_create(
+                event_id=event_id,
+                defaults={
+                    'profile': profile,
+                    'app_user_id': str(app_user_id or ''),
+                    'event_type': etype,
+                    'product_id': str(event.get('product_id') or ''),
+                    'transaction_id': transaction_id,
+                    'original_transaction_id': str(
+                        event.get('original_transaction_id') or ''
+                    ),
+                    'store': str(event.get('store') or ''),
+                    'environment': str(event.get('environment') or ''),
+                    'currency': str(event.get('currency') or 'USD')[:3].upper(),
+                    'gross_revenue_usd': gross_usd.quantize(cents, rounding=ROUND_HALF_UP),
+                    'estimated_proceeds_usd': proceeds.quantize(
+                        cents,
+                        rounding=ROUND_HALF_UP,
+                    ),
+                    'gross_revenue_local': gross_local.quantize(
+                        cents,
+                        rounding=ROUND_HALF_UP,
+                    ),
+                    'commission_percentage': commission,
+                    'tax_percentage': tax,
+                    'purchased_at': purchased_at,
+                    'expires_at': expires_at,
+                },
+            )
 
         return Response({'ok': True})
 
@@ -517,51 +589,64 @@ class WorkoutListCreateView(APIView):
         return Response(data, status=status.HTTP_201_CREATED)
 
 
-def _aggregate_exercise_lifetime_stats(profile):
+def _backfill_exercise_stats(profile):
     """
-    Roll up per-exercise totals from all saved workouts (JSON exercises list).
-    Reps = sum of (sets * reps) per exercise entry, matching the client workout log.
+    One-time migration path: users whose workouts predate the ExerciseStat
+    table get their aggregates rebuilt from workout JSON on first request.
     """
+    from django.db import transaction
+    from .services import parse_exercise_volume
+
     totals = {}
     for w in Workout.objects.filter(user=profile).only('exercises'):
-        for ex in w.exercises or []:
-            name = (ex.get('name') or '').strip()
-            if not name:
-                continue
-            try:
-                n_sets = int(ex.get('sets') or 0)
-            except (TypeError, ValueError):
-                n_sets = 0
-            try:
-                reps_per_set = int(ex.get('reps') or 0)
-            except (TypeError, ValueError):
-                reps_per_set = 0
-            if name not in totals:
-                totals[name] = {'total_sets': 0, 'total_reps': 0}
-            totals[name]['total_sets'] += n_sets
-            totals[name]['total_reps'] += n_sets * reps_per_set
-    items = [
-        {
-            'exercise_name': name,
-            'total_sets': v['total_sets'],
-            'total_reps': v['total_reps'],
-        }
-        for name, v in totals.items()
-    ]
-    items.sort(key=lambda x: (-x['total_reps'], x['exercise_name'].lower()))
-    return items
+        for name, (n_sets, n_reps) in parse_exercise_volume(w.exercises).items():
+            prev_sets, prev_reps = totals.get(name, (0, 0))
+            totals[name] = (prev_sets + n_sets, prev_reps + n_reps)
+
+    with transaction.atomic():
+        # Guard against a concurrent backfill having won the race.
+        if ExerciseStat.objects.filter(user=profile).exists():
+            return
+        ExerciseStat.objects.bulk_create([
+            ExerciseStat(
+                user=profile,
+                exercise_name=name,
+                total_sets=n_sets,
+                total_reps=n_reps,
+            )
+            for name, (n_sets, n_reps) in totals.items()
+        ])
 
 
 class ExerciseLifetimeStatsView(APIView):
     """
     GET /api/workouts/exercise-stats/
     Lifetime sets and reps per exercise name for the authenticated user.
+    Served from the ExerciseStat aggregate table (O(distinct exercises), not
+    O(all workouts)); rows are maintained incrementally on workout save.
     """
 
     def get(self, request):
         profile = request.user.profile
-        exercises = _aggregate_exercise_lifetime_stats(profile)
-        return Response({'exercises': exercises})
+        if (
+            not ExerciseStat.objects.filter(user=profile).exists()
+            and Workout.objects.filter(user=profile).exists()
+        ):
+            _backfill_exercise_stats(profile)
+
+        rows = ExerciseStat.objects.filter(user=profile).values(
+            'exercise_name', 'total_sets', 'total_reps',
+        )
+        items = [
+            {
+                'exercise_name': r['exercise_name'],
+                'total_sets': r['total_sets'],
+                'total_reps': r['total_reps'],
+            }
+            for r in rows
+        ]
+        items.sort(key=lambda x: (-x['total_reps'], x['exercise_name'].lower()))
+        return Response({'exercises': items})
 
 
 # ══════════════════════════════════════════════════════

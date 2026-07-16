@@ -3,48 +3,105 @@ Business logic for workout creation: streak calculation, XP, level, badge awards
 """
 import math
 from datetime import timedelta
+from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
-from .models import Profile, Badge, UserBadge, ChallengeParticipant
+from .models import Profile, Badge, UserBadge, ChallengeParticipant, ExerciseStat
+
+
+def parse_exercise_volume(exercises):
+    """
+    Normalize a workout's exercises JSON into {name: (sets, reps)} totals.
+    Reps = sets * reps_per_set, matching the client workout log semantics.
+    """
+    totals = {}
+    for ex in exercises or []:
+        name = (ex.get('name') or '').strip()
+        if not name:
+            continue
+        try:
+            n_sets = max(0, int(ex.get('sets') or 0))
+        except (TypeError, ValueError):
+            n_sets = 0
+        try:
+            reps_per_set = max(0, int(ex.get('reps') or 0))
+        except (TypeError, ValueError):
+            reps_per_set = 0
+        prev_sets, prev_reps = totals.get(name, (0, 0))
+        totals[name] = (prev_sets + n_sets, prev_reps + n_sets * reps_per_set)
+    return totals
+
+
+def _apply_exercise_stats(profile, workout):
+    """Incrementally fold this workout's volume into the per-exercise aggregates."""
+    for name, (n_sets, n_reps) in parse_exercise_volume(workout.exercises).items():
+        _, created = ExerciseStat.objects.get_or_create(
+            user=profile,
+            exercise_name=name,
+            defaults={'total_sets': n_sets, 'total_reps': n_reps},
+        )
+        if not created:
+            ExerciseStat.objects.filter(user=profile, exercise_name=name).update(
+                total_sets=F('total_sets') + n_sets,
+                total_reps=F('total_reps') + n_reps,
+            )
 
 
 def process_workout_created(workout):
     """
     Called after a new workout is saved.
     Updates the user's profile: total_workouts, streak, xp, level, last_workout_date.
-    Then checks for new badge awards and updates challenge progress.
+    Then updates exercise aggregates, badge awards, and challenge progress.
+
+    Runs in a transaction with the profile row locked so concurrent workout
+    posts for the same user cannot lose counter updates.
     """
-    profile = workout.user
+    with transaction.atomic():
+        profile = (
+            Profile.objects.select_for_update().get(pk=workout.user_id)
+        )
 
-    # Update total workouts
-    profile.total_workouts += 1
+        # Update total workouts
+        profile.total_workouts += 1
 
-    # Streak calculation
-    today = workout.workout_date
-    if profile.last_workout_date:
-        if profile.last_workout_date == today - timedelta(days=1):
-            profile.current_streak += 1
-        elif profile.last_workout_date == today:
-            pass
+        # Streak calculation
+        today = workout.workout_date
+        if profile.last_workout_date:
+            if profile.last_workout_date == today - timedelta(days=1):
+                profile.current_streak += 1
+            elif profile.last_workout_date == today:
+                pass
+            else:
+                profile.current_streak = 1
         else:
             profile.current_streak = 1
-    else:
-        profile.current_streak = 1
 
-    profile.longest_streak = max(profile.longest_streak, profile.current_streak)
+        profile.longest_streak = max(profile.longest_streak, profile.current_streak)
 
-    # XP and level
-    profile.xp += workout.xp_earned
-    profile.level = math.floor(profile.xp / 100.0) + 1
+        # XP and level
+        profile.xp += workout.xp_earned
+        profile.level = math.floor(profile.xp / 100.0) + 1
 
-    # Last workout date
-    profile.last_workout_date = today
-    profile.save()
+        # Last workout date
+        profile.last_workout_date = today
+        profile.save(update_fields=[
+            'total_workouts',
+            'current_streak',
+            'longest_streak',
+            'xp',
+            'level',
+            'last_workout_date',
+            'updated_at',
+        ])
 
-    # Check and award badges
-    check_and_award_badges(profile)
+        # Per-exercise lifetime aggregates (read by /workouts/exercise-stats/)
+        _apply_exercise_stats(profile, workout)
 
-    # Update challenge progress
-    newly_completed_challenges = update_challenge_progress(profile, workout)
+        # Check and award badges
+        check_and_award_badges(profile)
+
+        # Update challenge progress
+        newly_completed_challenges = update_challenge_progress(profile, workout)
     return newly_completed_challenges
 
 

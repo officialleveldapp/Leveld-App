@@ -40,6 +40,45 @@ class Profile(models.Model):
         return self.username
 
 
+class RevenueEvent(models.Model):
+    """A RevenueCat transaction event used for admin revenue reporting."""
+
+    event_id = models.CharField(max_length=255, unique=True)
+    profile = models.ForeignKey(
+        Profile,
+        on_delete=models.SET_NULL,
+        related_name='revenue_events',
+        null=True,
+        blank=True,
+    )
+    app_user_id = models.CharField(max_length=255, blank=True, default='')
+    event_type = models.CharField(max_length=64, db_index=True)
+    product_id = models.CharField(max_length=255, blank=True, default='')
+    transaction_id = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    original_transaction_id = models.CharField(max_length=255, blank=True, default='')
+    store = models.CharField(max_length=32, blank=True, default='')
+    environment = models.CharField(max_length=32, blank=True, default='')
+    currency = models.CharField(max_length=3, blank=True, default='USD')
+    gross_revenue_usd = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    estimated_proceeds_usd = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    gross_revenue_local = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    commission_percentage = models.DecimalField(max_digits=6, decimal_places=5, null=True, blank=True)
+    tax_percentage = models.DecimalField(max_digits=6, decimal_places=5, null=True, blank=True)
+    purchased_at = models.DateTimeField(db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-purchased_at']
+        indexes = [
+            models.Index(fields=['event_type', '-purchased_at']),
+            models.Index(fields=['profile', '-purchased_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.event_type} {self.product_id} ({self.event_id})'
+
+
 class NotificationPersonalityPreset(models.Model):
     """
     Server-driven copy for local notification “vibes” (motivational, troll, etc.).
@@ -90,6 +129,36 @@ class Workout(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.workout_date}"
+
+
+class ExerciseStat(models.Model):
+    """
+    Per-user lifetime totals for one exercise name, maintained incrementally on
+    workout save. Replaces scanning every Workout row's JSON per stats request.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name='exercise_stats',
+    )
+    exercise_name = models.CharField(max_length=200)
+    total_sets = models.IntegerField(default=0)
+    total_reps = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'exercise_name'], name='uniq_user_exercise_stat',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', '-total_reps']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.exercise_name}"
 
 
 class Badge(models.Model):
