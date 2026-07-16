@@ -1,8 +1,8 @@
 # Railway / Nixpacks: set the service root directory to `backend/`.
-# Requires DJANGO_SECRET_KEY and ALLOWED_HOSTS at build time for collectstatic.
+# collectstatic runs in [start] (not build) so the image build needs no Django env vars.
 
 [phases.build]
-cmds = ['pip install -r requirements.txt', 'python manage.py collectstatic --noinput']
+cmds = ['pip install -r requirements.txt']
 
 [start]
 # Run migrations + collect static (admin + /panel assets) on every boot, then serve.
